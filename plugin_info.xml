@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PluginInfo>
+  <Version>0.1.0.0</Version>
+  <Date>2026-08-10</Date>
+  <Author>schaerholzbau AG</Author>
+  <Name>
+    <Text language="German">Holzbau IFC Schnitt Importer</Text>
+    <Text language="English">Timber IFC Section Importer</Text>
+    <Text language="French">Importateur de coupes IFC Charpente</Text>
+  </Name>
+  <Description>
+    <Text language="German">
+<![CDATA[
+Generiert Grundriss- und Gebaeudeschnitte aus einer vom Architekten (GU) gelieferten IFC-Datei
+anhand der in Cadwork bereits definierten Ausgabeelemente und importiert die Ergebnisse
+lagerichtig als Referenz-Flaechen und -Linien ins 3D.
+]]>
+    </Text>
+    <Text language="English">
+<![CDATA[
+Generates floor plan and building section cuts from an IFC file delivered by the architect,
+based on output elements already defined in Cadwork, and imports the results as
+correctly positioned reference surfaces and lines into the 3D model.
+]]>
+    </Text>
+    <Text language="French">
+<![CDATA[
+Genere des plans et des coupes de batiment a partir d'un fichier IFC fourni par l'architecte,
+sur la base des elements de sortie deja definis dans Cadwork, et importe les resultats sous
+forme de surfaces et de lignes de reference correctement positionnees dans le modele 3D.
+]]>
+    </Text>
+  </Description>
+</PluginInfo>

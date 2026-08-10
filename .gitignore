@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+ifc_schnitt_importer/logs/*.txt
+ifc_schnitt_importer/logs/*.json
+ifc_schnitt_importer/settings/*.json
+ifc_schnitt_importer/shared/dependencies/site-packages-py*/
+!ifc_schnitt_importer/logs/.gitkeep
+!ifc_schnitt_importer/settings/.gitkeep
