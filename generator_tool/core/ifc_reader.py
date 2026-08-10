@@ -22,6 +22,14 @@ Triangle = Tuple[Point3, Point3, Point3]
 # Bauteilklassen, die in die Schnittberechnung einfliessen. Bewusst OHNE
 # Tueren/Fenster (nur Rohbau-relevant fuer den Holzbau-Vergleich) - bei
 # Bedarf spaeter mit dem Anwender erweitern/einschraenken.
+#
+# IfcBuildingElementPart ist bewusst dabei: mehrschichtige Waende (z.B.
+# Vectorworks-Fassadenaufbauten) werden oft als "leere" IfcWall (nur
+# Achslinie, keine Body-Repraesentation) exportiert, deren eigentliche
+# Geometrie ueber IfcRelAggregates auf einzelne Schicht-Bauteile
+# (Aussenschalung, Daemmung, OSB, ...) aufgeteilt ist - live an einem
+# grossen Projekt-IFC beobachtet. Ohne diese Klasse geht die gesamte
+# Wandgeometrie solcher Waende verloren.
 RELEVANT_IFC_CLASSES = (
     "IfcWall",
     "IfcWallStandardCase",
@@ -29,6 +37,7 @@ RELEVANT_IFC_CLASSES = (
     "IfcColumn",
     "IfcBeam",
     "IfcFooting",
+    "IfcBuildingElementPart",
 )
 
 
@@ -134,4 +143,9 @@ def lade_bauteile(ifc_file_path: str, ifc_classes: Tuple[str, ...] = RELEVANT_IF
             for i in range(0, len(faces), 3):
                 dreiecke.append((points[faces[i]], points[faces[i + 1]], points[faces[i + 2]]))
 
-            yield IfcBauteilGeometrie(ifc_guid=element.GlobalId, ifc_type=ifc_class, dreiecke=dreiecke)
+            # Name mit anhaengen, wo vorhanden (z.B. "Daemmung", "OSB" bei
+            # IfcBuildingElementPart-Schichten) - hilft beim spaeteren
+            # Zuordnen/Beschriften der importierten Cadwork-Referenzgeometrie.
+            bauteil_typ = f"{ifc_class} ({element.Name})" if element.Name else ifc_class
+
+            yield IfcBauteilGeometrie(ifc_guid=element.GlobalId, ifc_type=bauteil_typ, dreiecke=dreiecke)

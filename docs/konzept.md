@@ -224,6 +224,25 @@ Datei-Einheit. Regressionsgetestet (Demo-IFC weiterhin 26 Flaechen);
 gegen WDC3 mit aus den echten Storey-Elevationen abgeleiteten Hoehen
 verifiziert (OG/2OG +1m: 423 Flaechen statt 0).
 
+**8. Durchlauf - viele (Aussen-)Waende fehlen:** an einer konkreten
+uebersprungenen Wand ("...Aussenwand_Fassade_36,5...") direkt in der
+IFC nachvollzogen: die Wand ist eine reine "Achslinie" ohne eigene
+Body-Repraesentation, `IsDecomposedBy` (`IfcRelAggregates`) zerlegt sie
+stattdessen in 7 `IfcBuildingElementPart`-Schichten (Aussenschalung,
+Horizontal-/Vertikallattung, Gipsfaserplatte x2, Daemmung, OSB) -
+typischer Vectorworks-Export fuer mehrschichtige Holzbau-Fassaden.
+Jede Schicht hat ihre eigene Body-Repraesentation, aber
+`RELEVANT_IFC_CLASSES` kannte `IfcBuildingElementPart` bisher gar
+nicht - die gesamte Geometrie dieser Waende ging verloren. Fix:
+`IfcBuildingElementPart` zu `RELEVANT_IFC_CLASSES` hinzugefuegt; der
+Schichtname (z.B. "Daemmung") wird jetzt zusaetzlich im
+`ifc_element_type`-Feld mitgefuehrt (`"IfcBuildingElementPart
+(Daemmung)"`) fuer spaetere Beschriftung/Unterscheidung beim Import.
+Verifiziert: Demo-IFC 268 statt 118 Bauteile geladen (+150
+IfcBuildingElementPart, u.a. ein zuvor fehlender Stahlbeton-
+Fertigteiltraeger), WDC3 bei OG+1m 647 statt 423 Flaechen (+224, exakt
+die neu erfassten Fassadenschichten).
+
 ## Etappenplan
 
 - [x] **Etappe 0**: API-Spike (Ergebnisse oben)
