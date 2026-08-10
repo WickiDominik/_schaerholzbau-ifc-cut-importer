@@ -203,6 +203,27 @@ Ursachen:
    sich sinnvolle Ursprung/Richtung-Werte selbststaendig ermitteln
    lassen (kein Cadwork noetig, laeuft mit der generator_tool-venv).
 
+**7. Durchlauf - Faktor-1000-Fehler bei mm-nativen IFC-Dateien:** trotz
+neu (manuell, ohne ifc_bbox.py) gewaehlter Koordinaten lieferten
+weiterhin ALLE 5 Schnitte 0 Flaechen - diesmal schon beim Generator
+selbst, nicht erst beim Importer. Direkte Diagnose (Zugriff auf die
+reale IFC-Datei, `ifc_bbox.py` selbst ausgefuehrt): die berechnete
+Bounding-Box war winzig (X -46..-4, Y 12..36, Z 3..29 statt Werten im
+Tausenderbereich), obwohl die `IfcBuildingStorey.Elevation`-Werte
+normal aussahen (-4020..28800 mm). Ursache: `ifcopenshell.geom` liefert
+Koordinaten standardmaessig IMMER in Metern, unabhaengig von der in der
+Datei deklarierten Laengeneinheit. Die Demo-IFC ist meter-nativ, dort
+fiel das nicht auf (Meter-Rohwerte * 1000 = zufaellig richtig). WDC3 ist
+mm-nativ - dort ergab dieselbe Rechnung einen Faktor-1000-Fehler.
+Verifiziert durch direkten Vergleich von `create_shape` mit/ohne
+`CONVERT_BACK_UNITS`. Fix: `settings.set(settings.CONVERT_BACK_UNITS,
+True)` in `ifc_reader.lade_bauteile` - damit kommen Koordinaten in der
+Datei-eigenen Einheit zurueck, worauf `_mm_scale_factor` (ueber
+`calculate_unit_scale`) korrekt nach mm skaliert, fuer jede
+Datei-Einheit. Regressionsgetestet (Demo-IFC weiterhin 26 Flaechen);
+gegen WDC3 mit aus den echten Storey-Elevationen abgeleiteten Hoehen
+verifiziert (OG/2OG +1m: 423 Flaechen statt 0).
+
 ## Etappenplan
 
 - [x] **Etappe 0**: API-Spike (Ergebnisse oben)

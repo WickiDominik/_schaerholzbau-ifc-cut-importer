@@ -83,6 +83,15 @@ def lade_bauteile(ifc_file_path: str, ifc_classes: Tuple[str, ...] = RELEVANT_IF
 
     settings = ifcopenshell.geom.settings()
     settings.set(settings.USE_WORLD_COORDS, True)
+    # OHNE das hier liefert ifcopenshell.geom Koordinaten IMMER in Metern,
+    # unabhaengig von der in der Datei deklarierten Laengeneinheit (live
+    # beobachtet: bei einer mm-nativen Datei ergab das einen Faktor-1000-
+    # Fehler, bei einer Meter-nativen Datei wie der Demo-IFC fiel es
+    # zufaellig nicht auf). Mit CONVERT_BACK_UNITS=True kommen die
+    # Koordinaten in der Datei-eigenen Einheit zurueck, worauf
+    # _mm_scale_factor (ueber calculate_unit_scale) korrekt nach mm
+    # skaliert - fuer jede Datei-Einheit richtig, nicht nur fuer Meter.
+    settings.set(settings.CONVERT_BACK_UNITS, True)
 
     # Elemente koennen ueber mehrere IFC-Klassen mehrfach erfasst werden
     # (z.B. IfcWall UND IfcWallStandardCase existieren in derselben Datei
