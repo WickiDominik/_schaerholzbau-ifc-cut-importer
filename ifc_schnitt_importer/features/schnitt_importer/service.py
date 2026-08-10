@@ -107,9 +107,16 @@ class SchnittImporterService:
             if len(vertices) < 3:
                 continue
             x_direction = self._safe_x_direction(vertices, normal)
+            # create_polygon_panel schliesst den Umriss NICHT selbst - der
+            # letzte Punkt muss explizit eine Wiederholung des ersten sein,
+            # sonst fehlt die letzte Kante und Cadwork zeichnet die Flaeche
+            # falsch (live beobachtet). ergebnis.flaechen speichert das
+            # einfache, nicht-geschlossene Polygon (siehe schnitt_format.py)
+            # - hier fuer den API-Aufruf explizit schliessen.
+            closed_vertices = vertices + [vertices[0]]
             try:
                 eid = ec.create_polygon_panel(
-                    _vertex_list(vertices),
+                    _vertex_list(closed_vertices),
                     ReferenceGeometryConfig.SURFACE_THICKNESS_MM,
                     _point_3d(x_direction),
                     _point_3d(normal),

@@ -71,17 +71,30 @@ class GeneratorToolConfig:
 
 
 class SchnittDefinitionConfig:
-    """Where/how the Schnitt-Definition is stored as a Cadwork Benutzerattribut.
+    """Where/how the Schnitt-Definition(en) are stored as Cadwork Benutzerattribute.
 
     See shared/schnitt_definition.py for the text format itself. The
     attribute number is a plain Cadwork Benutzerattribut slot (1..N);
     picked distinct from slots already used by other schaerholzbau
     plugins (shb_toolcenter uses 4, 11-15) to avoid confusion, though
     slots are per-element so an actual collision is not possible.
+
+    Cadwork-Benutzerattribute sind auf ca. 128 Zeichen begrenzt (live
+    beobachtet: eine zweizeilige Definition wurde bei genau 128 Zeichen
+    abgeschnitten). Eine einzelne Schnitt-Definition ist bereits
+    ~70-90 Zeichen lang - fuer mehrere Schnitte auf EINEM Element reicht
+    daher kein Mehrzeilen-Text in einem einzigen Attribut. Stattdessen:
+    mehrere Attribut-NUMMERN, je eine Definition pro Nummer
+    (ATTRIBUTE_NUMBER .. ATTRIBUTE_NUMBER + MAX_DEFINITIONEN_PRO_ELEMENT - 1).
     """
 
     ATTRIBUTE_NUMBER = 20
     ATTRIBUTE_LABEL = "IFC Schnitt-Definition"
+    MAX_DEFINITIONEN_PRO_ELEMENT = 10
+
+    @classmethod
+    def attribute_numbers(cls):
+        return range(cls.ATTRIBUTE_NUMBER, cls.ATTRIBUTE_NUMBER + cls.MAX_DEFINITIONEN_PRO_ELEMENT)
 
 
 class ReferenceGeometryConfig:

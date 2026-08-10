@@ -57,35 +57,45 @@ class SchnittGeneratorService:
     # ---- Schritt 1: Schnitt-Definitionen aus Benutzerattributen ----
 
     def ensure_attribute_label(self) -> None:
-        """Label the configured Benutzerattribut slot so it's recognisable
-        in Cadwork's attribute dialog (best-effort, never fails hard)."""
+        """Label all configured Benutzerattribut-Slots so sie in Cadworks
+        Attribut-Dialog erkennbar sind (best-effort, never fails hard)."""
 
-        try:
-            ac.set_user_attribute_name(SchnittDefinitionConfig.ATTRIBUTE_NUMBER, SchnittDefinitionConfig.ATTRIBUTE_LABEL)
-        except Exception as e:
-            print(f"[schnitt_generator] Konnte Attribut-Beschriftung nicht setzen: {e}")
+        for index, number in enumerate(SchnittDefinitionConfig.attribute_numbers(), start=1):
+            try:
+                ac.set_user_attribute_name(number, f"{SchnittDefinitionConfig.ATTRIBUTE_LABEL} {index}")
+            except Exception as e:
+                print(f"[schnitt_generator] Konnte Attribut-Beschriftung fuer Nr. {number} nicht setzen: {e}")
 
     def scan_schnitt_definitionen(self) -> SchnittDefinitionExport:
-        """Scan all identifiable elements for a filled Schnitt-Definition attribute."""
+        """Scan all identifiable elements for filled Schnitt-Definition attributes.
+
+        Ein Element kann mehrere Schnitte tragen - dafuer werden mehrere
+        Benutzerattribut-NUMMERN durchsucht (nicht mehrere Zeilen in
+        einem Attribut, siehe SchnittDefinitionConfig: Cadwork-
+        Benutzerattribute sind auf ~128 Zeichen begrenzt).
+        """
 
         definitionen: List[SchnittDefinition] = []
         fehler: List[SchnittDefinitionFehler] = []
 
         element_ids = ec.get_all_identifiable_element_ids()
         for element_id in element_ids:
-            try:
-                text = ac.get_user_attribute(element_id, SchnittDefinitionConfig.ATTRIBUTE_NUMBER)
-            except Exception as e:
-                fehler.append(SchnittDefinitionFehler(element_id=element_id, fehler=f"Attribut nicht lesbar: {e}"))
-                continue
+            for attribute_number in SchnittDefinitionConfig.attribute_numbers():
+                try:
+                    text = ac.get_user_attribute(element_id, attribute_number)
+                except Exception as e:
+                    fehler.append(
+                        SchnittDefinitionFehler(element_id=element_id, fehler=f"Attribut {attribute_number} nicht lesbar: {e}")
+                    )
+                    continue
 
-            if not text or not text.strip():
-                continue
+                if not text or not text.strip():
+                    continue
 
-            geparste, zeilen_fehler = SchnittDefinition.parse_multiple_from_text(text, source_element_id=element_id)
-            definitionen.extend(geparste)
-            for meldung in zeilen_fehler:
-                fehler.append(SchnittDefinitionFehler(element_id=element_id, fehler=meldung))
+                geparste, zeilen_fehler = SchnittDefinition.parse_multiple_from_text(text, source_element_id=element_id)
+                definitionen.extend(geparste)
+                for meldung in zeilen_fehler:
+                    fehler.append(SchnittDefinitionFehler(element_id=element_id, fehler=f"Attribut {attribute_number}, {meldung}"))
 
         return SchnittDefinitionExport(definitionen=definitionen, fehler=fehler)
 

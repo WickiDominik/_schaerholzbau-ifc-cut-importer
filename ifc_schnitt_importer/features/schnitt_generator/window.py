@@ -35,14 +35,16 @@ def show_schnitt_generator_window(parent=None):
         font=("TkDefaultFont", 12, "bold"),
     ).pack(anchor="w")
 
+    _attribut_bereich = SchnittDefinitionConfig.attribute_numbers()
     ttk.Label(
         frame,
         text=(
-            f"Schnitt-Definitionen kommen aus dem Benutzerattribut Nr. {SchnittDefinitionConfig.ATTRIBUTE_NUMBER} "
-            f"(\"{SchnittDefinitionConfig.ATTRIBUTE_LABEL}\").\n"
-            "Mehrere Schnitte auf einem Element: eine Definition pro Zeile, z.B.\n"
-            "  Name=Schnitt A-A;Typ=vertikal;Ursprung=1234.5,6789.0,0;Richtung=0,1,0\n"
-            "  Name=Grundriss EG;Typ=horizontal;Ursprung=0,0,1000;Richtung=0,0,1"
+            f"Schnitt-Definitionen kommen aus den Benutzerattributen Nr. {_attribut_bereich.start}-"
+            f"{_attribut_bereich.stop - 1} (\"{SchnittDefinitionConfig.ATTRIBUTE_LABEL} 1\", \"... 2\", ...), z.B.\n"
+            "  Name=Schnitt A-A;Typ=vertikal;Ursprung=1234.5,6789.0,0;Richtung=0,1,0\n\n"
+            f"Mehrere Schnitte auf einem Element: je EIN Attribut pro Schnitt "
+            f"(Attribut {_attribut_bereich.start} = 1. Schnitt, {_attribut_bereich.start + 1} = 2. Schnitt, ...) "
+            "- Cadwork-Attribute sind auf ca. 128 Zeichen begrenzt, daher nicht mehrzeilig in EINEM Attribut."
         ),
         justify="left",
         wraplength=660,

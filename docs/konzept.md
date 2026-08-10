@@ -86,8 +86,7 @@ Quelle Cadwork-API: [docs.cadwork.com - bim_controller](https://docs.cadwork.com
 ## Schnitt-Definition (Benutzerattribut)
 
 Da die Ausgabeelement-Ebene nicht per API lesbar ist, definiert der
-Anwender die Schnitt-Definition manuell in EINEM Cadwork-Benutzerattribut
-(Nummer siehe `app/config.py` -> `SchnittDefinitionConfig`, aktuell 20)
+Anwender die Schnitt-Definition manuell in einem Cadwork-Benutzerattribut
 auf dem Ausgabeelement (oder jedem anderen Referenzelement) als
 strukturierter Text:
 
@@ -100,10 +99,24 @@ Name=Schnitt A-A;Typ=vertikal;Ursprung=1234.5,6789.0,0;Richtung=0,1,0
 - `Ursprung`: ein Punkt auf der Schnittebene, `x,y,z` in mm (Cadwork-Weltkoordinaten)
 - `Richtung`: die Ebenennormale, `x,y,z` (muss nicht normiert sein)
 
-Parser + Validierung: [`ifc_schnitt_importer/shared/schnitt_definition.py`](../ifc_schnitt_importer/shared/schnitt_definition.py).
+**Mehrere Schnitte auf einem Element:** Cadwork-Benutzerattribute sind
+auf ca. 128 Zeichen begrenzt (live beobachtet - eine zweizeilige
+Definition wurde bei genau 128 Zeichen abgeschnitten). Eine einzelne
+Definition ist bereits ~70-90 Zeichen lang, mehrzeiliger Text in EINEM
+Attribut skaliert also nicht. Stattdessen: mehrere Attribut-**Nummern**,
+je eine Definition pro Nummer (`app/config.py` ->
+`SchnittDefinitionConfig.attribute_numbers()`, Standard: 20-29, also bis
+zu 10 Schnitte je Element - Attribut 20 = 1. Schnitt, 21 = 2. Schnitt,
+usw.).
+
+Parser + Validierung: [`ifc_schnitt_importer/shared/schnitt_definition.py`](../ifc_schnitt_importer/shared/schnitt_definition.py)
+(`SchnittDefinition.parse_multiple_from_text` unterstuetzt zusaetzlich
+weiterhin mehrere Zeilen *innerhalb* eines Attributs, falls kurze Namen
+das zulassen - fuer den Regelfall aber: ein Attribut pro Schnitt).
 Das Cadwork-Plugin (Menuepunkt "IFC Schnitt Generator") scannt alle
-Elemente, liest dieses Attribut, validiert es und schreibt eine
-Bruecken-Datei `schnitt_definitionen.json` fuer das externe Tool.
+Elemente und alle konfigurierten Attribut-Nummern, validiert die Texte
+und schreibt eine Bruecken-Datei `schnitt_definitionen.json` fuer das
+externe Tool.
 
 ## Architektur (3 Stufen)
 
@@ -243,9 +256,24 @@ aus**, dafuer waere die betroffene `.ifccut.json`-Datei (oder die
 Schnitt-Definition, die zum Dreieck-Fall gefuehrt hat) hilfreich.
 
 **Mehrere Schnitte pro Element:** urspruenglich erlaubte das
-Benutzerattribut nur EINE Schnitt-Definition pro Element. Erweitert auf
-mehrere Definitionen, eine pro Zeile (`SchnittDefinition.
-parse_multiple_from_text`, siehe `shared/schnitt_definition.py`) - ein
-einzelnes Ausgabeelement kann damit beliebig viele Schnitte tragen.
-Fehlerhafte Zeilen blockieren die uebrigen nicht (Fehlermeldung
-enthaelt die Zeilennummer).
+Benutzerattribut nur EINE Schnitt-Definition pro Element. Erste
+Erweiterung auf mehrzeiligen Text in einem Attribut
+(`SchnittDefinition.parse_multiple_from_text`) scheiterte im Livetest:
+**Cadwork-Benutzerattribute sind auf ca. 128 Zeichen begrenzt** - eine
+zweite Zeile wurde exakt bei 128 Zeichen abgeschnitten. Endgueltige
+Loesung: mehrere Attribut-**Nummern** statt mehrerer Zeilen
+(`SchnittDefinitionConfig.attribute_numbers()`, Standard 20-29 = bis zu
+10 Schnitte je Element). `parse_multiple_from_text` bleibt als
+Bonus-Unterstuetzung fuer kurze mehrzeilige Faelle erhalten, ist aber
+nicht mehr der empfohlene Weg (siehe UI-Hinweistext im Generator-
+Fenster).
+
+**Flaechen wurden falsch/unvollstaendig gezeichnet:** `create_polygon_panel`
+schliesst den uebergebenen Umriss nicht selbst - der letzte Punkt der
+`vertex_list` muss explizit eine Wiederholung des ersten sein, sonst
+fehlt die letzte Kante der Flaeche. `ergebnis.flaechen` speichert
+weiterhin das einfache (nicht geschlossene) Polygon (siehe
+`schnitt_format.py`); `schnitt_importer/service.py` haengt den
+Schlusspunkt jetzt unmittelbar vor dem `create_polygon_panel`-Aufruf an.
+Das erklaert vermutlich einen Teil der zuvor beobachteten
+"Dreiecke"/fehlerhaften Flaechen mit.
