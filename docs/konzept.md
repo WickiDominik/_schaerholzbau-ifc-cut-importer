@@ -190,7 +190,20 @@ der Typ-Repraesentation im Reader beheben laesst.
       verifiziert) - **echter Cadwork-Livetest (Etappe 6) noch offen**,
       insbesondere ob `create_polygon_panel` absolute 3D-Vertices wie
       angenommen entgegennimmt.
-- [ ] **Etappe 5**: UI/UX-Feinschliff (Fortschrittsanzeige, Fehlerbilder,
-      Vorschau vor Import, Knopf um `generator_tool` direkt aus Cadwork
-      anzustossen)
-- [ ] **Etappe 6**: Test mit echten Projektdaten, Rollout
+- [x] **Etappe 5 (Teil 1)**: "IFC Schnitt Generator"-Fenster kann das
+      externe `generator_tool` jetzt direkt anstossen - IFC-Datei per
+      Dateidialog waehlen (Pfad wird gemerkt), Knopf "Schnitte
+      generieren" fuehrt Export + Subprozess-Aufruf der
+      `generator_tool`-venv in einem Schritt aus und zeigt Ergebnis/
+      Fehler an. `SchnittGeneratorService.generate_schnitte(ifc_datei)`.
+      Voraussetzung: `generator_tool/.venv` einmalig eingerichtet (siehe
+      `generator_tool/README.md`); ohne venv erscheint eine klare
+      Anleitung statt eines kryptischen Fehlers.
+      End-to-end mit gefaelschten Cadwork-Modulen + echtem
+      Subprozess-Aufruf verifiziert (Attribut -> Export ->
+      generator_tool-venv -> .ifccut.json, 26 Flaechen/108 Linien).
+- [ ] **Etappe 5 (Teil 2)**: weiterer UI/UX-Feinschliff (Fortschrittsanzeige
+      waehrend der Generierung, Vorschau vor dem Import)
+- [ ] **Etappe 6**: Cadwork-Livetest der gesamten Kette (insbesondere
+      `create_polygon_panel`/`create_line_points` im Importer noch nicht
+      live getestet), danach Test mit echten Projektdaten, Rollout

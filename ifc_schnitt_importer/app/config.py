@@ -50,6 +50,26 @@ class PathConfig:
         return os.path.join(directory, filename)
 
 
+class GeneratorToolConfig:
+    """Wo das externe generator_tool/ (eigene Python-Umgebung) liegt.
+
+    Siehe generator_tool/README.md fuer das Setup (venv + pip install).
+    Der Pfad ist relativ zum Plugin-Root, damit er unabhaengig vom
+    jeweiligen Rechner/Benutzer funktioniert, solange generator_tool/
+    im selben Repo-Checkout liegt.
+    """
+
+    RELATIVE_TOOL_DIR = "generator_tool"
+    RELATIVE_VENV_PYTHON = os.path.join("generator_tool", ".venv", "Scripts", "python.exe")
+    RELATIVE_CLI_SCRIPT = os.path.join("generator_tool", "schnitt_generator.py")
+
+    # Grosszuegiges Timeout (Sekunden) fuer die IFC-Verarbeitung grosser Projekte.
+    SUBPROCESS_TIMEOUT_SECONDS = 3600
+
+    # Merkt sich den zuletzt gewaehlten IFC-Pfad zwischen Fenster-Oeffnungen.
+    LAST_IFC_PATH_SETTINGS_FILE = "last_ifc_path.json"
+
+
 class SchnittDefinitionConfig:
     """Where/how the Schnitt-Definition is stored as a Cadwork Benutzerattribut.
 
