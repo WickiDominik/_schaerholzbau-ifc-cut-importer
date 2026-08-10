@@ -4,12 +4,16 @@ STATUS: Etappe 4/6 (implementiert, mehrfach live getestet - siehe
 docs/konzept.md). Liest eine vom generator_tool erzeugte .ifccut.json
 und erzeugt:
 
-- je Flaeche eine Panel-Flaeche (create_polygon_panel) UND eine damit
-  verbundene Kontur-Linie (create_spline_line ueber denselben
-  geschlossenen Eckpunktring) - EIN Linienelement je Flaeche statt
-  vieler einzelner Kantensegmente.
+- je Flaeche eine Panel-Flaeche (create_polygon_panel, geschlossener
+  Eckpunktring inkl. Schlusspunkt) UND je Kante des Umrings ein eigenes
+  2-Punkt-Linienelement (create_line_points) - ein Cadwork-Linienelement
+  traegt maximal 2 Punkte, "verbunden" heisst hier: alle Kanten inkl.
+  der Schlusskante zurueck zum ersten Punkt werden erzeugt, sodass sich
+  die Segmente an den Eckpunkten treffen (kein separates
+  Mehrpunkt-/Spline-Element - das wurde live verworfen, siehe
+  docs/konzept.md).
 - je restlichem offenem Liniensegment (Sonderfall, siehe
-  schnitt_berechnung.py) einzelne create_line_points-Elemente.
+  schnitt_berechnung.py) ebenfalls einzelne create_line_points-Elemente.
 
 Alle erzeugten Elemente bekommen BUG (Bauuntergruppe) =
 ReferenceGeometryConfig.BAUUNTERGRUPPE ("Grundrisse/Schnitte", gleiche
@@ -135,19 +139,19 @@ class SchnittImporterService:
             except Exception as e:
                 fehler.append(SchnittImportFehler(f"Flaeche ({flaeche.ifc_element_type} {flaeche.ifc_guid}): {e}"))
 
-            # Verbundene Kontur: EIN Linienelement fuer den ganzen Umriss
-            # statt eines separaten create_line_points je Kante ("verbinde
-            # jeden Schnitt"). ANDERS als create_polygon_panel will
-            # create_spline_line den Ring NICHT geschlossen (Start- ==
-            # Endpunkt) - das erzeugte live keine sichtbare Linie mehr
-            # (vermutlich ein entartetes Null-Segment/Tangentenproblem der
-            # Spline-Berechnung). Deshalb hier bewusst die unveraenderte,
-            # nicht-geschlossene Punktliste verwenden.
-            try:
-                kontur_id = ec.create_spline_line(_vertex_list(vertices))
-                linie_ids.append(kontur_id)
-            except Exception as e:
-                fehler.append(SchnittImportFehler(f"Kontur ({flaeche.ifc_element_type} {flaeche.ifc_guid}): {e}"))
+            # Kontur: je Kante ein eigenes 2-Punkt-Linienelement
+            # (create_line_points) - ein Cadwork-Linienelement kann keine
+            # mehr als 2 Punkte tragen (create_spline_line war der falsche
+            # Ansatz - live verworfen, siehe docs/konzept.md). "Verbunden"
+            # heisst hier: alle Kanten des geschlossenen Umrings inkl. der
+            # Schlusskante zurueck zum ersten Punkt, die Segmente teilen
+            # sich also an den Eckpunkten - nicht ein einzelnes Element.
+            for i in range(len(closed_vertices) - 1):
+                try:
+                    eid = ec.create_line_points(_point_3d(closed_vertices[i]), _point_3d(closed_vertices[i + 1]))
+                    linie_ids.append(eid)
+                except Exception as e:
+                    fehler.append(SchnittImportFehler(f"Kontur-Kante ({flaeche.ifc_element_type} {flaeche.ifc_guid}): {e}"))
 
         for linie in ergebnis.linien:
             # Restfaelle: offene (nicht geschlossene) Segmentketten, siehe

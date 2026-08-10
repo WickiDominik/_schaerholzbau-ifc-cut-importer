@@ -297,15 +297,21 @@ Wunsch nach dem 3. Livetest:
   Benutzerattribute 20-24 eines Testelements.
 
 **4. Durchlauf:** Flaechen funktionieren jetzt einwandfrei, aber die
-Konturlinien (`create_spline_line`) nicht mehr. Ursache: anders als
-`create_polygon_panel` will `create_spline_line` den Ring NICHT
-geschlossen (Start- == Endpunkt) - mit dem duplizierten Schlusspunkt
-entstand keine sichtbare Linie mehr (vermutlich ein entartetes
-Null-Laenge-Segment, das die Spline-/Tangentenberechnung stoert). Fix:
-`create_spline_line` bekommt die unveraenderte, nicht-geschlossene
-Punktliste (wie in `ergebnis.flaechen` gespeichert); nur
-`create_polygon_panel` bekommt weiterhin den expliziten Schlusspunkt.
-Mock-Dry-Run entsprechend umgedreht (prueft jetzt explizit, dass NICHT
-geschlossen uebergeben wird).
+Konturlinien (`create_spline_line`) nicht mehr. Erster Versuch: Ursache
+sei der doppelte Schlusspunkt (anders als bei `create_polygon_panel`)
+- behoben, aber im 5. Durchlauf weiterhin fehlerhaft.
+
+**5. Durchlauf - `create_spline_line` komplett verworfen:** laut
+Anwender kann ein Cadwork-Linienelement grundsaetzlich nur 2 Punkte
+tragen - ein Umriss mit mehr als 2 Punkten muss also als MEHRERE
+2-Punkt-Linien abgebildet werden, nicht als ein Mehrpunkt-/Spline-
+Element. `create_spline_line` war damit von Anfang an der falsche
+Ansatz fuer diesen Anwendungsfall (unabhaengig vom Schliessungs-Detail).
+Zurueckgebaut auf `create_line_points` je Kante des geschlossenen
+Eckpunktrings (inkl. Schlusskante zurueck zum ersten Punkt) - identisch
+zum urspruenglichen, nachweislich funktionierenden Ansatz vor der
+"eine Kontur = ein Element"-Idee. "Verbunden" heisst hier: alle Kanten
+inkl. Schlusskante werden erzeugt und teilen sich Endpunkte, nicht ein
+einzelnes Cadwork-Element.
 Das erklaert vermutlich einen Teil der zuvor beobachteten
 "Dreiecke"/fehlerhaften Flaechen mit.
