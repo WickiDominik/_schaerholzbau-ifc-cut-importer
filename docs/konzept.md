@@ -204,6 +204,22 @@ der Typ-Repraesentation im Reader beheben laesst.
       generator_tool-venv -> .ifccut.json, 26 Flaechen/108 Linien).
 - [ ] **Etappe 5 (Teil 2)**: weiterer UI/UX-Feinschliff (Fortschrittsanzeige
       waehrend der Generierung, Vorschau vor dem Import)
-- [ ] **Etappe 6**: Cadwork-Livetest der gesamten Kette (insbesondere
-      `create_polygon_panel`/`create_line_points` im Importer noch nicht
-      live getestet), danach Test mit echten Projektdaten, Rollout
+- [ ] **Etappe 6**: Cadwork-Livetest der gesamten Kette, danach Test mit
+      echten Projektdaten, Rollout
+
+## Etappe 6 - Livetest-Erkenntnisse (laufend)
+
+**2026-08-10, 1. Durchlauf:** `create_polygon_panel` schlug fuer alle
+Flaechen fehl: `incompatible function arguments`. Ursache: die Cadwork-
+API-Funktionen erwarten ihre eigenen pybind11-Typen
+(`cadwork.point_3d`, `cadwork.vertex_list`), keine reinen Python-Tupel/
+Listen - anders als z.B. `bim_controller`/`attribute_controller`, die
+mit einfachen Python-Werten arbeiten. Behoben: neue
+`cadwork_api/cadwork_core.py` (Wrapper um das Basismodul `cadwork`,
+analog zu `shb_toolcenter.cadwork_api.cadwork_core`) plus
+`_point_3d`/`_vertex_list`-Konvertierung in
+`schnitt_importer/service.py`, bevor `create_polygon_panel`/
+`create_line_points` aufgerufen werden. Mit einem gefaelschten
+`cadwork`-Modul (das denselben Typfehler erzwingen wuerde, faellt bei
+falscher Konvertierung durch) erneut durchgetestet - naechster
+Livetest steht aus.

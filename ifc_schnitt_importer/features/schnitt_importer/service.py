@@ -17,10 +17,29 @@ from typing import List
 
 from ifc_schnitt_importer.app.config import PathConfig, ReferenceGeometryConfig
 from ifc_schnitt_importer.cadwork_api import attributes as ac
+from ifc_schnitt_importer.cadwork_api import cadwork_core as cw
 from ifc_schnitt_importer.cadwork_api import elements as ec
 from ifc_schnitt_importer.cadwork_api import visualization as vc
 from ifc_schnitt_importer.shared.schnitt_format import SchnittErgebnis, load_schnitt_ergebnis
 from ifc_schnitt_importer.shared.vector_math import normalize, subtract
+
+
+def _point_3d(p):
+    """Plain (x, y, z) -> cadwork.point_3d.
+
+    Die Cadwork-API-Funktionen erwarten ihre eigenen pybind11-Typen
+    (cadwork.point_3d, cadwork.vertex_list), keine reinen Python-Tupel/
+    Listen - siehe docs/konzept.md, Etappe 6 Livetest-Erkenntnisse.
+    """
+
+    return cw.point_3d(p[0], p[1], p[2])
+
+
+def _vertex_list(points):
+    vertices = cw.vertex_list()
+    for p in points:
+        vertices.append(_point_3d(p))
+    return vertices
 
 
 @dataclass
@@ -89,14 +108,19 @@ class SchnittImporterService:
                 continue
             x_direction = self._safe_x_direction(vertices, normal)
             try:
-                eid = ec.create_polygon_panel(vertices, ReferenceGeometryConfig.SURFACE_THICKNESS_MM, x_direction, normal)
+                eid = ec.create_polygon_panel(
+                    _vertex_list(vertices),
+                    ReferenceGeometryConfig.SURFACE_THICKNESS_MM,
+                    _point_3d(x_direction),
+                    _point_3d(normal),
+                )
                 flaeche_ids.append(eid)
             except Exception as e:
                 fehler.append(SchnittImportFehler(f"Flaeche ({flaeche.ifc_element_type} {flaeche.ifc_guid}): {e}"))
 
         for linie in ergebnis.linien:
             try:
-                eid = ec.create_line_points(tuple(linie.start), tuple(linie.end))
+                eid = ec.create_line_points(_point_3d(linie.start), _point_3d(linie.end))
                 linie_ids.append(eid)
             except Exception as e:
                 fehler.append(SchnittImportFehler(f"Linie ({linie.ifc_element_type} {linie.ifc_guid}): {e}"))
