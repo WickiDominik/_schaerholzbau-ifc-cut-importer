@@ -295,5 +295,17 @@ Wunsch nach dem 3. Livetest:
 - 5 Beispiel-Schnitt-Definitionen fuer die Demo-IFC berechnet und
   verifiziert (siehe Antwort im Chat) - fertig zum Einfuegen in die
   Benutzerattribute 20-24 eines Testelements.
+
+**4. Durchlauf:** Flaechen funktionieren jetzt einwandfrei, aber die
+Konturlinien (`create_spline_line`) nicht mehr. Ursache: anders als
+`create_polygon_panel` will `create_spline_line` den Ring NICHT
+geschlossen (Start- == Endpunkt) - mit dem duplizierten Schlusspunkt
+entstand keine sichtbare Linie mehr (vermutlich ein entartetes
+Null-Laenge-Segment, das die Spline-/Tangentenberechnung stoert). Fix:
+`create_spline_line` bekommt die unveraenderte, nicht-geschlossene
+Punktliste (wie in `ergebnis.flaechen` gespeichert); nur
+`create_polygon_panel` bekommt weiterhin den expliziten Schlusspunkt.
+Mock-Dry-Run entsprechend umgedreht (prueft jetzt explizit, dass NICHT
+geschlossen uebergeben wird).
 Das erklaert vermutlich einen Teil der zuvor beobachteten
 "Dreiecke"/fehlerhaften Flaechen mit.

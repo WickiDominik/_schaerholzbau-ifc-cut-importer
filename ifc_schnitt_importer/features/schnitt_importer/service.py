@@ -117,13 +117,12 @@ class SchnittImporterService:
             if len(vertices) < 3:
                 continue
             x_direction = self._safe_x_direction(vertices, normal)
-            # create_polygon_panel/create_spline_line schliessen den Umriss
-            # NICHT selbst - der letzte Punkt muss explizit eine
-            # Wiederholung des ersten sein, sonst fehlt die letzte Kante
-            # und Cadwork zeichnet die Flaeche/Kontur falsch (live
-            # beobachtet). ergebnis.flaechen speichert das einfache,
-            # nicht-geschlossene Polygon (siehe schnitt_format.py) - hier
-            # fuer beide API-Aufrufe explizit schliessen.
+            # create_polygon_panel schliesst den Umriss NICHT selbst - der
+            # letzte Punkt muss explizit eine Wiederholung des ersten sein,
+            # sonst fehlt die letzte Kante (live beobachtet). ergebnis.
+            # flaechen speichert das einfache, nicht-geschlossene Polygon
+            # (siehe schnitt_format.py) - hier fuer den Panel-Aufruf
+            # explizit schliessen.
             closed_vertices = vertices + [vertices[0]]
             try:
                 eid = ec.create_polygon_panel(
@@ -136,11 +135,16 @@ class SchnittImporterService:
             except Exception as e:
                 fehler.append(SchnittImportFehler(f"Flaeche ({flaeche.ifc_element_type} {flaeche.ifc_guid}): {e}"))
 
-            # Verbundene Kontur: EIN Linienelement fuer den ganzen
-            # geschlossenen Umriss statt eines separaten create_line_points
-            # je Kante ("verbinde jeden Schnitt").
+            # Verbundene Kontur: EIN Linienelement fuer den ganzen Umriss
+            # statt eines separaten create_line_points je Kante ("verbinde
+            # jeden Schnitt"). ANDERS als create_polygon_panel will
+            # create_spline_line den Ring NICHT geschlossen (Start- ==
+            # Endpunkt) - das erzeugte live keine sichtbare Linie mehr
+            # (vermutlich ein entartetes Null-Segment/Tangentenproblem der
+            # Spline-Berechnung). Deshalb hier bewusst die unveraenderte,
+            # nicht-geschlossene Punktliste verwenden.
             try:
-                kontur_id = ec.create_spline_line(_vertex_list(closed_vertices))
+                kontur_id = ec.create_spline_line(_vertex_list(vertices))
                 linie_ids.append(kontur_id)
             except Exception as e:
                 fehler.append(SchnittImportFehler(f"Kontur ({flaeche.ifc_element_type} {flaeche.ifc_guid}): {e}"))
