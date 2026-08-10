@@ -50,6 +50,28 @@ def _mm_scale_factor(ifc_file) -> float:
     return meters_per_unit * 1000.0
 
 
+def _get_body_representation(element):
+    """Findet gezielt die 'Body'-Repraesentation eines Elements.
+
+    IFC-Elemente koennen mehrere Shape-Repraesentationen gleichzeitig
+    tragen (z.B. 'Axis'/Curve2D fuer die Achslinie, 'FootPrint' fuer den
+    Grundriss, 'Body' fuer die eigentliche 3D-Volumengeometrie).
+    `ifcopenshell.geom.create_shape` ohne explizite Repraesentation kann
+    bei manchen Exporten die falsche (z.B. eine 2D-Kurve statt eines
+    Volumens) erwischen -> "Failed to process shape" (live beobachtet
+    an einem groesseren Projekt-IFC). Deshalb hier gezielt nach 'Body'
+    (Standardfall) bzw. 'Body-Fallback' suchen, statt der ersten
+    verfuegbaren Repraesentation zu vertrauen.
+    """
+
+    import ifcopenshell.util.representation as ifc_rep_util
+
+    body = ifc_rep_util.get_representation(element, "Model", "Body")
+    if body is None:
+        body = ifc_rep_util.get_representation(element, "Model", "Body-Fallback")
+    return body
+
+
 def lade_bauteile(ifc_file_path: str, ifc_classes: Tuple[str, ...] = RELEVANT_IFC_CLASSES) -> Iterator[IfcBauteilGeometrie]:
     """Lade alle `ifc_classes`-Elemente inkl. Weltkoordinaten-Mesh (mm)."""
 
@@ -73,18 +95,18 @@ def lade_bauteile(ifc_file_path: str, ifc_classes: Tuple[str, ...] = RELEVANT_IF
             if element.GlobalId in seen_guids:
                 continue
 
-            if element.Representation is None:
+            body = _get_body_representation(element)
+            if body is None:
                 # Bekannte Luecke (siehe docs/konzept.md, Etappe 3): manche
-                # Archicad-IFC2X3-Exporte geben Bauteil-Instanzen (in der
-                # Demo-IFC z.B. ALLE IfcBeam und ein Teil der IfcColumn)
-                # keine eigene Representation - die Geometrie liegt dann
-                # (falls ueberhaupt) nur am IfcTypeObject. Wird hier noch
-                # nicht aufgeloest, Element wird uebersprungen.
-                print(f"[ifc_reader] {ifc_class} {element.GlobalId} hat keine eigene Representation - uebersprungen")
+                # Exporte geben Bauteil-Instanzen keine eigene
+                # Body-Repraesentation (Geometrie liegt dann - falls
+                # ueberhaupt - nur am IfcTypeObject). Wird hier noch nicht
+                # aufgeloest, Element wird uebersprungen.
+                print(f"[ifc_reader] {ifc_class} {element.GlobalId} hat keine Body-Repraesentation - uebersprungen")
                 continue
 
             try:
-                shape = ifcopenshell.geom.create_shape(settings, element)
+                shape = ifcopenshell.geom.create_shape(settings, element, body)
             except RuntimeError as e:
                 print(f"[ifc_reader] Geometrie fuer {ifc_class} {element.GlobalId} nicht erzeugbar: {e}")
                 continue

@@ -178,6 +178,31 @@ sich das eher ueber Archicads IFC-Export-Einstellungen (Body-
 Repraesentation fuer Traeger/Stuetzen aktivieren) oder ueber Aufloesen
 der Typ-Repraesentation im Reader beheben laesst.
 
+**6. Durchlauf - grosses reales Projekt-IFC:** 2992 Bauteile geladen,
+aber 0 Flaechen/Linien bei ALLEN 5 Beispiel-Schnitten. Zwei getrennte
+Ursachen:
+
+1. **Echter Bug:** Viele `IfcWall`-Instanzen (alle vom selben Typ
+   "..._Aussenwand_Fassade_36,5_Typ_1") scheiterten mit
+   `Failed to process shape`, Representation `('Axis', 'Curve2D')`.
+   `ifcopenshell.geom.create_shape(settings, element)` ohne explizite
+   Repraesentation kann bei Elementen mit mehreren Shape-Repraesentationen
+   (Axis/FootPrint/Body) die falsche erwischen - hier eine 2D-Kurve statt
+   des 3D-Volumens. Fix: `ifc_reader._get_body_representation` sucht
+   gezielt die 'Body' (Fallback 'Body-Fallback') Subcontext-Repraesentation
+   ueber `ifcopenshell.util.representation.get_representation(element,
+   "Model", "Body")` und uebergibt sie explizit an `create_shape`.
+   Regressionsgetestet gegen die Demo-IFC (unveraendert 26 Flaechen bei
+   x=34750).
+2. **Keine Geometrie-Luecke, sondern falsche Koordinaten:** die 5
+   Beispiel-Schnitte waren mit der Bounding-Box der *Demo-IFC* berechnet
+   - bei einem anderen, echten Gebaeude liegen diese Ebenen schlicht
+   ausserhalb des Gebaeudes. Neues Hilfsskript
+   [`generator_tool/ifc_bbox.py`](../generator_tool/ifc_bbox.py) gibt
+   fuer eine beliebige IFC-Datei Bounding-Box + Geschosshoehen aus, damit
+   sich sinnvolle Ursprung/Richtung-Werte selbststaendig ermitteln
+   lassen (kein Cadwork noetig, laeuft mit der generator_tool-venv).
+
 ## Etappenplan
 
 - [x] **Etappe 0**: API-Spike (Ergebnisse oben)
