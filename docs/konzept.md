@@ -181,9 +181,15 @@ der Typ-Repraesentation im Reader beheben laesst.
       (`generator_tool/tests/test_schnitt_berechnung.py`, synthetischer
       Wuerfel) UND end-to-end gegen die mitgelieferte Demo-IFC verifiziert
       (siehe "Etappe 3 - Validierung" unten).
-- [ ] **Etappe 4**: Cadwork-Plugin - Importer: Zwischendateien einlesen,
-      Flaechen/Linien erzeugen, alten Import ersetzen
-      (`SchnittImporterService.import_schnitt`)
+- [x] **Etappe 4**: Cadwork-Plugin - Importer: Zwischendateien einlesen,
+      Flaechen (`create_polygon_panel`) + Linien (`create_line_points`)
+      erzeugen, alten Import derselben Schnitt-Bezeichnung ersetzen
+      (`SchnittImporterService.import_schnitt`). Ablauf-Logik per
+      Mock-Cadwork-Modulen durchgetestet (17/68 Flaechen/Linien der
+      echten Demo-IFC-Ausgabe korrekt verarbeitet, Ersetzungs-Logik
+      verifiziert) - **echter Cadwork-Livetest (Etappe 6) noch offen**,
+      insbesondere ob `create_polygon_panel` absolute 3D-Vertices wie
+      angenommen entgegennimmt.
 - [ ] **Etappe 5**: UI/UX-Feinschliff (Fortschrittsanzeige, Fehlerbilder,
       Vorschau vor Import, Knopf um `generator_tool` direkt aus Cadwork
       anzustossen)
