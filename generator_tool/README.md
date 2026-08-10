@@ -17,9 +17,10 @@ python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
 ```
 
-`ifcopenshell` unterstuetzt aktuell Python 3.9-3.12 (Stand 2026-08-10,
-siehe docs/konzept.md) - bitte eine venv mit einer dieser Versionen
-verwenden, unabhaengig davon, welche Python-Version Cadwork selbst nutzt.
+`ifcopenshell` 0.8.5 laeuft nachweislich auf Python 3.13 (getestet
+2026-08-10); unabhaengig davon, welche Python-Version Cadwork selbst
+nutzt - `pip install ifcopenshell` in der venv zeigt die fuer die
+jeweilige Python-Version tatsaechlich verfuegbare Version an.
 
 ## Ausfuehren
 
@@ -42,7 +43,8 @@ dasselbe Modul, es gibt nur EIN Format).
 
 ## Status
 
-Etappe 3 (noch offen): `core/ifc_reader.py` und
-`core/schnitt_berechnung.py` sind Geruest/TODO. Die eigentliche
-Ebenen-Schnitt-Geometrie (IFC-Solid x Schnittebene -> Polygon/Linien)
-folgt als naechster Programmierschritt.
+Etappe 3 erledigt und gegen die mitgelieferte Demo-IFC end-to-end
+verifiziert (siehe docs/konzept.md, "Etappe 3 - Validierung"). Bekannte
+Luecke: IFC-Bauteil-Instanzen ohne eigene `Representation` (in der
+Demo-IFC alle `IfcBeam`, ein Teil der `IfcColumn`) werden aktuell
+uebersprungen statt ueber die Typ-Repraesentation aufgeloest.

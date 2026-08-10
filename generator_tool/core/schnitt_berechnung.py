@@ -1,35 +1,264 @@
 """Ebene x Bauteil-Mesh -> Schnittflaechen/-linien.
 
-STATUS: Etappe 3 (Geruest). Kernaufgabe: fuer eine SchnittEbene (Ursprung
-+ Normale, siehe shared/schnitt_format.py) und eine Liste von
-IfcBauteilGeometrie (Dreiecksnetz, siehe ifc_reader.py) je Bauteil den
-Schnitt mit der Ebene berechnen:
+Fuer eine SchnittEbene (Ursprung + Normale, siehe shared/schnitt_format.py)
+und eine Liste von IfcBauteilGeometrie (Dreiecksnetz, siehe ifc_reader.py)
+wird je Bauteil der Schnitt mit der Ebene berechnet:
 
-- Schnittlinien: jedes Dreieck, das die Ebene schneidet, liefert ein
-  Liniensegment (Standard-Dreieck/Ebene-Schnitt, Vorzeichenwechsel der
-  drei Eckpunkt-Abstaende zur Ebene pruefen).
-- Schnittflaechen: die Liniensegmente eines Bauteils zu geschlossenen
-  Polygonen verketten (Endpunkt-Matching mit Toleranz) - ergibt die
-  gefuellte Schnittflaeche fuer die "Flaechen" des Importers.
+1. Jedes Dreieck, das die Ebene schneidet, liefert genau ein Liniensegment
+   (klassischer Dreieck/Ebene-Schnitt ueber Vorzeichenwechsel der
+   Eckpunkt-Abstaende zur Ebene).
+2. Die Liniensegmente eines Bauteils werden zu Polylinien verkettet
+   (Endpunkt-Matching mit Toleranz). Geschlossene Ketten (der Normalfall
+   bei einem wasserdichten Solid wie Wand/Decke/Stuetze) ergeben je eine
+   gefuellte Schnittflaeche UND ihre Konturlinien; offene Ketten (z.B. bei
+   unsauberer Triangulierung) liefern nur Linien, keine Flaeche.
 
-ifcopenshell selbst bringt fuer sowas evtl. bereits Hilfsfunktionen
-(z.B. ueber `ifcopenshell.util` oder externe clipping-Bibliotheken wie
-`trimesh`/`shapely` fuer die Polygon-Verkettung) - bei der Umsetzung
-pruefen statt komplett neu zu implementieren.
+Reines Python, keine ifcopenshell-Abhaengigkeit - dadurch unit-testbar
+ohne IFC-Datei (siehe generator_tool/tests/test_schnitt_berechnung.py).
 """
 
 from __future__ import annotations
 
-from typing import Iterable, List
+import math
+from collections import defaultdict
+from typing import Iterable, List, Tuple
 
 from generator_tool.core.ifc_reader import IfcBauteilGeometrie
 from ifc_schnitt_importer.shared.schnitt_format import SchnittEbene, SchnittFlaeche, SchnittLinie
+
+Point3 = Tuple[float, float, float]
+
+# Abstaende unterhalb dieser Schwelle (mm) gelten als "auf der Ebene".
+EPSILON_MM = 1e-6
+
+# Rundungspraezision (Nachkommastellen, mm) fuers Verketten von Segment-
+# Endpunkten zu Polylinien. 2 Nachkommastellen = 1/100 mm Toleranz.
+CHAIN_PRECISION = 2
+
+
+def _sub(a: Point3, b: Point3) -> Point3:
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def _dot(a: Point3, b: Point3) -> float:
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _lerp(a: Point3, b: Point3, t: float) -> Point3:
+    return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t)
+
+
+def normalize(v: Point3) -> Point3:
+    length = math.sqrt(_dot(v, v))
+    if length == 0:
+        raise ValueError("Richtung ist ein Nullvektor, kann nicht normiert werden")
+    return (v[0] / length, v[1] / length, v[2] / length)
+
+
+# Toleranz (mm) fuer das Entfernen kollinearer Zwischenpunkte, die durch
+# Trianguliersierungs-Diagonalen entstehen (z.B. eine Wandflaeche aus 2
+# Dreiecken erzeugt an ihrer Schnittkante einen zusaetzlichen Punkt genau
+# an der Diagonalen-Kreuzung). Rein kosmetisch/vereinfachend - aendert
+# nicht die Form, nur die Punktanzahl.
+COLLINEAR_TOLERANCE_MM = 1e-2
+
+
+def _perpendicular_distance(point: Point3, a: Point3, b: Point3) -> float:
+    ab = _sub(b, a)
+    ab_len_sq = _dot(ab, ab)
+    if ab_len_sq < 1e-12:
+        diff = _sub(point, a)
+        return math.sqrt(_dot(diff, diff))
+    t = _dot(_sub(point, a), ab) / ab_len_sq
+    closest = _lerp(a, b, t)
+    diff = _sub(point, closest)
+    return math.sqrt(_dot(diff, diff))
+
+
+def _simplify_collinear(points: List[Point3], is_closed: bool, tolerance: float = COLLINEAR_TOLERANCE_MM) -> List[Point3]:
+    """Entfernt Punkte, die (innerhalb `tolerance`) auf der Strecke ihrer
+    beiden Nachbarn liegen. Bei geschlossenen Ketten ist `points[-1]`
+    eine Wiederholung von `points[0]` (Ring) - diese Randbehandlung wird
+    hier beruecksichtigt."""
+
+    pts = list(points)
+    ring_duplicate = is_closed and len(pts) > 1 and pts[0] == pts[-1]
+    if ring_duplicate:
+        pts = pts[:-1]
+
+    min_points = 3 if is_closed else 2
+    changed = True
+    while changed and len(pts) > min_points:
+        changed = False
+        n = len(pts)
+        new_pts = []
+        for i in range(n):
+            if not is_closed and (i == 0 or i == n - 1):
+                new_pts.append(pts[i])
+                continue
+            prev_pt = pts[(i - 1) % n]
+            next_pt = pts[(i + 1) % n]
+            if _perpendicular_distance(pts[i], prev_pt, next_pt) < tolerance:
+                changed = True
+                continue
+            new_pts.append(pts[i])
+        pts = new_pts
+
+    if ring_duplicate:
+        pts = pts + [pts[0]]
+    return pts
+
+
+def _triangle_plane_intersection(
+    triangle: Tuple[Point3, Point3, Point3], origin: Point3, normal: Point3
+) -> Tuple[Point3, Point3] | None:
+    """Segment (p_a, p_b), falls die Ebene das Dreieck-Innere schneidet, sonst None."""
+
+    distances = [_dot(_sub(p, origin), normal) for p in triangle]
+    # Eckpunkte exakt auf der Ebene minimal wegruecken, damit der
+    # Vorzeichenwechsel-Algorithmus eindeutig bleibt (seltener Grenzfall).
+    distances = [EPSILON_MM if abs(d) < EPSILON_MM else d for d in distances]
+
+    signs = [d > 0 for d in distances]
+    if all(signs) or not any(signs):
+        return None  # Dreieck liegt komplett auf einer Seite
+
+    points: List[Point3] = []
+    for i in range(3):
+        j = (i + 1) % 3
+        if signs[i] != signs[j]:
+            da, db = distances[i], distances[j]
+            t = da / (da - db)
+            points.append(_lerp(triangle[i], triangle[j], t))
+
+    if len(points) != 2:
+        # Entartet (z.B. Ebene beruehrt nur eine Ecke) - fuer v1 ignorieren.
+        return None
+
+    return (points[0], points[1])
+
+
+def _quantize(p: Point3, precision: int = CHAIN_PRECISION) -> Tuple[float, float, float]:
+    return (round(p[0], precision), round(p[1], precision), round(p[2], precision))
+
+
+def _chain_segments(
+    segments: Iterable[Tuple[Point3, Point3]], precision: int = CHAIN_PRECISION
+) -> List[Tuple[List[Point3], bool]]:
+    """Verkettet Segmente zu Polylinien.
+
+    Rueckgabe: Liste von (Punkte, ist_geschlossen). Bei geschlossenen
+    Ketten ist der letzte Punkt eine Wiederholung des ersten (Ring).
+    """
+
+    canonical: dict = {}
+    adjacency: dict = defaultdict(list)  # key -> [(neighbor_key, edge_id), ...]
+    edges: List[Tuple[tuple, tuple]] = []
+
+    for pa, pb in segments:
+        ka, kb = _quantize(pa, precision), _quantize(pb, precision)
+        if ka == kb:
+            continue  # Nulllaenge-Segment (numerisches Rauschen)
+        canonical.setdefault(ka, pa)
+        canonical.setdefault(kb, pb)
+        edge_id = len(edges)
+        edges.append((ka, kb))
+        adjacency[ka].append((kb, edge_id))
+        adjacency[kb].append((ka, edge_id))
+
+    visited_edges: set = set()
+
+    def _next_unvisited(node_key):
+        for neighbor_key, edge_id in adjacency[node_key]:
+            if edge_id not in visited_edges:
+                return neighbor_key, edge_id
+        return None
+
+    chains: List[Tuple[List[Point3], bool]] = []
+
+    for start_edge_id, (ka, kb) in enumerate(edges):
+        if start_edge_id in visited_edges:
+            continue
+        visited_edges.add(start_edge_id)
+        chain_keys = [ka, kb]
+
+        # Vorwaerts von kb weiterlaufen, bis kein unbesuchter Anschluss
+        # mehr da ist oder wir zum Startpunkt ka zurueckkommen (Ring zu).
+        current = kb
+        while True:
+            nxt = _next_unvisited(current)
+            if nxt is None:
+                break
+            neighbor_key, edge_id = nxt
+            visited_edges.add(edge_id)
+            chain_keys.append(neighbor_key)
+            current = neighbor_key
+            if current == ka:
+                break
+
+        is_closed = chain_keys[-1] == ka and len(chain_keys) > 2
+
+        if not is_closed:
+            # Falls nicht geschlossen: auch rueckwaerts von ka aus verlaengern.
+            current = ka
+            while True:
+                nxt = _next_unvisited(current)
+                if nxt is None:
+                    break
+                neighbor_key, edge_id = nxt
+                visited_edges.add(edge_id)
+                chain_keys.insert(0, neighbor_key)
+                current = neighbor_key
+
+        points = [canonical[k] for k in chain_keys]
+        chains.append((points, is_closed))
+
+    return chains
 
 
 def berechne_schnitt(
     ebene: SchnittEbene,
     bauteile: Iterable[IfcBauteilGeometrie],
-) -> tuple[List[SchnittFlaeche], List[SchnittLinie]]:
-    """TODO (Etappe 3): Dreieck/Ebene-Schnitt je Bauteil, siehe Moduldoc."""
+) -> Tuple[List[SchnittFlaeche], List[SchnittLinie]]:
+    origin = tuple(ebene.origin)
+    normal = normalize(tuple(ebene.normal))
 
-    raise NotImplementedError("Etappe 3: Schnittberechnung")
+    flaechen: List[SchnittFlaeche] = []
+    linien: List[SchnittLinie] = []
+
+    for bauteil in bauteile:
+        segments = []
+        for triangle in bauteil.dreiecke:
+            segment = _triangle_plane_intersection(triangle, origin, normal)
+            if segment is not None:
+                segments.append(segment)
+
+        if not segments:
+            continue
+
+        for raw_points, is_closed in _chain_segments(segments):
+            points = _simplify_collinear(raw_points, is_closed)
+            if len(points) < 2:
+                continue
+
+            for i in range(len(points) - 1):
+                linien.append(
+                    SchnittLinie(
+                        start=list(points[i]),
+                        end=list(points[i + 1]),
+                        ifc_element_type=bauteil.ifc_type,
+                        ifc_guid=bauteil.ifc_guid,
+                    )
+                )
+
+            if is_closed:
+                # Letzter Punkt ist die Wiederholung des ersten (Ring) -> weglassen.
+                flaechen.append(
+                    SchnittFlaeche(
+                        vertices=[list(p) for p in points[:-1]],
+                        ifc_element_type=bauteil.ifc_type,
+                        ifc_guid=bauteil.ifc_guid,
+                    )
+                )
+
+    return flaechen, linien

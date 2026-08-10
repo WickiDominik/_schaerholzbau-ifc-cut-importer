@@ -137,6 +137,34 @@ Beide Module sind reines Python ohne Cadwork-Importe und werden von
 *beiden* Seiten (Cadwork-Plugin UND `generator_tool/`) importiert - ein
 einziges, gemeinsames Format statt zweier Implementierungen.
 
+## Etappe 3 - Validierung (2026-08-10)
+
+Gegen die mitgelieferte Demo-IFC (`Archicad Demoprojekt Bürogebäude.ifc`,
+IFC2X3, Erdgeschoss auf Elevation 0.0) end-to-end getestet:
+
+- Horizontaler Schnitt (z=1000mm, "Grundriss EG +1.0m"): 17 Flaechen,
+  68 Linien, alle Z-Koordinaten exakt 1000mm, X/Y-Bereich plausibel
+  innerhalb der Wand-Bounding-Box.
+- Vertikaler Schnitt (x=34750mm, "Schnitt Mitte X"): 26 Flaechen,
+  108 Linien, alle X-Koordinaten exakt 34750mm, Z-Bereich -3900..13100mm
+  passt zu den IFC-Geschoss-Elevationen (Fundament -5.3m bis
+  Dachaufsicht 13.2m).
+- Einheiten-Umrechnung (IFC-Datei in Meter -> mm) korrekt (Koordinaten
+  stimmen mit der unabhaengig berechneten Wand-Bounding-Box in Metern
+  ueberein, x1000).
+- Laufzeit: ~4s fuer die ganze Demo-IFC (118 Bauteile) und 2 Schnitte.
+
+**Bekannte Luecke:** In dieser Demo-IFC haben alle 24 `IfcBeam`- und
+26 von 63 `IfcColumn`-Instanzen keine eigene `Representation` (nur das
+`IfcTypeObject` traegt ggf. Geometrie, typisch fuer Archicad-Bibliotheks-
+/GDL-Objekte in bestimmten Export-Einstellungen). `ifc_reader.py`
+uebergeht diese Elemente aktuell mit einer Konsolen-Warnung, statt die
+Typ-Repraesentation aufzuloesen. Waende, Decken und Fundamente sind
+davon nicht betroffen (100% mit eigener Geometrie). Offen: pruefen, ob
+sich das eher ueber Archicads IFC-Export-Einstellungen (Body-
+Repraesentation fuer Traeger/Stuetzen aktivieren) oder ueber Aufloesen
+der Typ-Repraesentation im Reader beheben laesst.
+
 ## Etappenplan
 
 - [x] **Etappe 0**: API-Spike (Ergebnisse oben)
@@ -146,10 +174,13 @@ einziges, gemeinsames Format statt zweier Implementierungen.
       Benutzerattributen scannen + `schnitt_definitionen.json` exportieren
       (`SchnittGeneratorService.export_schnitt_definitionen`, UI in
       `features/schnitt_generator/window.py`)
-- [ ] **Etappe 3**: `generator_tool/` - echte `ifcopenshell`-Anbindung
+- [x] **Etappe 3**: `generator_tool/` - `ifcopenshell`-Anbindung
       (`core/ifc_reader.py`) + Ebenen-Schnittberechnung
-      (`core/schnitt_berechnung.py`); CLI-Geruest (`schnitt_generator.py`)
-      steht bereits
+      (`core/schnitt_berechnung.py`, Dreieck/Ebene-Schnitt + Polylinien-
+      Verkettung + Kollinearpunkt-Vereinfachung). Unit-getestet
+      (`generator_tool/tests/test_schnitt_berechnung.py`, synthetischer
+      Wuerfel) UND end-to-end gegen die mitgelieferte Demo-IFC verifiziert
+      (siehe "Etappe 3 - Validierung" unten).
 - [ ] **Etappe 4**: Cadwork-Plugin - Importer: Zwischendateien einlesen,
       Flaechen/Linien erzeugen, alten Import ersetzen
       (`SchnittImporterService.import_schnitt`)
