@@ -10,8 +10,11 @@ wird je Bauteil der Schnitt mit der Ebene berechnet:
 2. Die Liniensegmente eines Bauteils werden zu Polylinien verkettet
    (Endpunkt-Matching mit Toleranz). Geschlossene Ketten (der Normalfall
    bei einem wasserdichten Solid wie Wand/Decke/Stuetze) ergeben je eine
-   gefuellte Schnittflaeche UND ihre Konturlinien; offene Ketten (z.B. bei
-   unsauberer Triangulierung) liefern nur Linien, keine Flaeche.
+   gefuellte Schnittflaeche (SchnittFlaeche) - deren Kontur wird beim
+   Import direkt aus den Eckpunkten als EIN zusammenhaengendes Element
+   erzeugt, siehe schnitt_importer/service.py; offene Ketten (seltener
+   Sonderfall, z.B. unvollstaendige Triangulierung) liefern einzelne
+   SchnittLinie-Segmente ohne zugehoerige Flaeche.
 
 Reines Python, keine ifcopenshell-Abhaengigkeit - dadurch unit-testbar
 ohne IFC-Datei (siehe generator_tool/tests/test_schnitt_berechnung.py).
@@ -280,17 +283,12 @@ def berechne_schnitt(
             if len(points) < 2:
                 continue
 
-            for i in range(len(points) - 1):
-                linien.append(
-                    SchnittLinie(
-                        start=list(points[i]),
-                        end=list(points[i + 1]),
-                        ifc_element_type=bauteil.ifc_type,
-                        ifc_guid=bauteil.ifc_guid,
-                    )
-                )
-
             if is_closed:
+                # Geschlossene Kette -> eine Flaeche. Die zugehoerige
+                # Kontur-Linie wird beim Import direkt aus den
+                # Flaechen-Eckpunkten als EIN zusammenhaengendes Element
+                # erzeugt (siehe schnitt_importer/service.py) statt hier
+                # als N einzelne Kantensegmente dupliziert zu werden.
                 # Letzter Punkt ist die Wiederholung des ersten (Ring) -> weglassen.
                 flaechen.append(
                     SchnittFlaeche(
@@ -299,5 +297,18 @@ def berechne_schnitt(
                         ifc_guid=bauteil.ifc_guid,
                     )
                 )
+            else:
+                # Offene (nicht geschlossene) Kette - seltener Sonderfall
+                # (z.B. unvollstaendige Triangulierung). Kein Flaechen-
+                # Aequivalent, daher weiterhin als einzelne Segmente.
+                for i in range(len(points) - 1):
+                    linien.append(
+                        SchnittLinie(
+                            start=list(points[i]),
+                            end=list(points[i + 1]),
+                            ifc_element_type=bauteil.ifc_type,
+                            ifc_guid=bauteil.ifc_guid,
+                        )
+                    )
 
     return flaechen, linien

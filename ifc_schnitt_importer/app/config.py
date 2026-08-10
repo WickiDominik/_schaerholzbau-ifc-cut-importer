@@ -100,12 +100,17 @@ class SchnittDefinitionConfig:
 class ReferenceGeometryConfig:
     """Configuration for the imported reference Flaechen/Linien.
 
-    The imported geometry is explicitly kept apart from real Holzbau
-    elements (own group/attribute, replaceable on re-import) but precise
-    enough to be used as an underlay for Ausfuehrungsplanung.
+    Die importierten Elemente werden ueber BG (Baugruppe) und BUG
+    (Bauuntergruppe) organisiert - dieselbe Konvention wie
+    shb_toolcenter.features.cut_handling (dort ist "Grundrisse/Schnitte"
+    bereits die Standard-Subgroup fuer Schnitt-Inhalte), damit sich das
+    konsistent in die bestehende Gruppen-/BG-Struktur einreiht.
     """
 
-    GROUP_PREFIX = "IFC-Referenz"
+    BAUUNTERGRUPPE = "Grundrisse/Schnitte"  # BUG - fix, fuer alle Schnitte gleich
+    # BG (Baugruppe) wird pro Schnitt direkt auf den Schnittnamen gesetzt
+    # (siehe schnitt_importer/service.py), keine eigene Konstante noetig.
+
     LINE_COLOR = 5  # Cadwork colour index, tuned during Etappe 4/5
     SURFACE_COLOR = 8
     COMMENT_TAG = "ifc_schnitt_import"

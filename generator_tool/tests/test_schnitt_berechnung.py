@@ -63,8 +63,9 @@ def test_horizontaler_schnitt_durch_wuerfel_liefert_ein_quadrat():
         _assert(abs(z - size / 2) < 1e-6, f"alle Punkte müssen auf z={size/2} liegen, war z={z}")
         _assert(-1e-6 <= x <= size + 1e-6 and -1e-6 <= y <= size + 1e-6, f"Punkt ausserhalb des Wuerfels: ({x},{y},{z})")
 
-    # 4 Kanten des geschlossenen Rings als Linien
-    _assert(len(linien) == 4, f"4 Konturlinien erwartet, erhalten {len(linien)}")
+    # Geschlossene Ketten liefern keine eigenen Linien mehr - die Kontur
+    # wird beim Import direkt aus den Flaechen-Eckpunkten erzeugt.
+    _assert(len(linien) == 0, f"keine separaten Linien fuer eine geschlossene Flaeche erwartet, erhalten {len(linien)}")
 
     flaeche_fuss = _polygon_area_xy(flaechen[0].vertices)
     _assert(abs(flaeche_fuss - size * size) < 1e-3, f"Flaeche sollte {size*size} sein, war {flaeche_fuss}")

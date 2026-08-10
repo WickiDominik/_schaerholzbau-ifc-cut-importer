@@ -1,11 +1,21 @@
 """Business logic for the IFC Schnitt Importer.
 
-STATUS: Etappe 4 (implementiert, erster Cadwork-Live-Test steht noch
-aus - siehe docs/konzept.md). Liest eine vom generator_tool erzeugte
-.ifccut.json und erzeugt Flaechen (create_polygon_panel) + Linien
-(create_line_points) an der IFC-Originalposition, in einer eigenen
-Gruppe je Schnitt. Ein erneuter Import desselben Schnitts ersetzt die
-zuvor importierte Geometrie (ueber ein Benutzerattribut wiedergefunden).
+STATUS: Etappe 4/6 (implementiert, mehrfach live getestet - siehe
+docs/konzept.md). Liest eine vom generator_tool erzeugte .ifccut.json
+und erzeugt:
+
+- je Flaeche eine Panel-Flaeche (create_polygon_panel) UND eine damit
+  verbundene Kontur-Linie (create_spline_line ueber denselben
+  geschlossenen Eckpunktring) - EIN Linienelement je Flaeche statt
+  vieler einzelner Kantensegmente.
+- je restlichem offenem Liniensegment (Sonderfall, siehe
+  schnitt_berechnung.py) einzelne create_line_points-Elemente.
+
+Alle erzeugten Elemente bekommen BUG (Bauuntergruppe) =
+ReferenceGeometryConfig.BAUUNTERGRUPPE ("Grundrisse/Schnitte", gleiche
+Konvention wie shb_toolcenter.cut_handling) und BG (Baugruppe) = der
+Schnittname. Ein erneuter Import desselben Schnitts ersetzt die zuvor
+importierte Geometrie (ueber ein Benutzerattribut wiedergefunden).
 """
 
 from __future__ import annotations
@@ -107,12 +117,13 @@ class SchnittImporterService:
             if len(vertices) < 3:
                 continue
             x_direction = self._safe_x_direction(vertices, normal)
-            # create_polygon_panel schliesst den Umriss NICHT selbst - der
-            # letzte Punkt muss explizit eine Wiederholung des ersten sein,
-            # sonst fehlt die letzte Kante und Cadwork zeichnet die Flaeche
-            # falsch (live beobachtet). ergebnis.flaechen speichert das
-            # einfache, nicht-geschlossene Polygon (siehe schnitt_format.py)
-            # - hier fuer den API-Aufruf explizit schliessen.
+            # create_polygon_panel/create_spline_line schliessen den Umriss
+            # NICHT selbst - der letzte Punkt muss explizit eine
+            # Wiederholung des ersten sein, sonst fehlt die letzte Kante
+            # und Cadwork zeichnet die Flaeche/Kontur falsch (live
+            # beobachtet). ergebnis.flaechen speichert das einfache,
+            # nicht-geschlossene Polygon (siehe schnitt_format.py) - hier
+            # fuer beide API-Aufrufe explizit schliessen.
             closed_vertices = vertices + [vertices[0]]
             try:
                 eid = ec.create_polygon_panel(
@@ -125,7 +136,18 @@ class SchnittImporterService:
             except Exception as e:
                 fehler.append(SchnittImportFehler(f"Flaeche ({flaeche.ifc_element_type} {flaeche.ifc_guid}): {e}"))
 
+            # Verbundene Kontur: EIN Linienelement fuer den ganzen
+            # geschlossenen Umriss statt eines separaten create_line_points
+            # je Kante ("verbinde jeden Schnitt").
+            try:
+                kontur_id = ec.create_spline_line(_vertex_list(closed_vertices))
+                linie_ids.append(kontur_id)
+            except Exception as e:
+                fehler.append(SchnittImportFehler(f"Kontur ({flaeche.ifc_element_type} {flaeche.ifc_guid}): {e}"))
+
         for linie in ergebnis.linien:
+            # Restfaelle: offene (nicht geschlossene) Segmentketten, siehe
+            # schnitt_berechnung.py - selten, einzeln als Linie erzeugt.
             try:
                 eid = ec.create_line_points(_point_3d(linie.start), _point_3d(linie.end))
                 linie_ids.append(eid)
@@ -134,9 +156,9 @@ class SchnittImporterService:
 
         all_new_ids = flaeche_ids + linie_ids
         if all_new_ids:
-            group_name = f"{ReferenceGeometryConfig.GROUP_PREFIX} - {ergebnis.schnitt_name}"
             try:
-                ac.set_group(all_new_ids, group_name)
+                ac.set_group(all_new_ids, ergebnis.schnitt_name)  # BG
+                ac.set_subgroup(all_new_ids, ReferenceGeometryConfig.BAUUNTERGRUPPE)  # BUG
                 ac.set_name(all_new_ids, ergebnis.schnitt_name)
                 ac.set_comment(all_new_ids, ReferenceGeometryConfig.COMMENT_TAG)
                 ac.set_user_attribute(all_new_ids, ReferenceGeometryConfig.IMPORT_MARKER_ATTRIBUTE_NUMBER, ergebnis.schnitt_name)

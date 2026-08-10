@@ -275,5 +275,25 @@ fehlt die letzte Kante der Flaeche. `ergebnis.flaechen` speichert
 weiterhin das einfache (nicht geschlossene) Polygon (siehe
 `schnitt_format.py`); `schnitt_importer/service.py` haengt den
 Schlusspunkt jetzt unmittelbar vor dem `create_polygon_panel`-Aufruf an.
+
+**BG/BUG + verbundene Konturen (2026-08-10):** drei Aenderungen auf
+Wunsch nach dem 3. Livetest:
+
+- Importierte Elemente bekommen jetzt BG (Baugruppe) = Schnittname und
+  BUG (Bauuntergruppe) = `ReferenceGeometryConfig.BAUUNTERGRUPPE`
+  ("Grundrisse/Schnitte" - dieselbe Konvention wie
+  `shb_toolcenter.features.cut_handling`) statt eines eigenen
+  "IFC-Referenz"-Gruppennamens.
+- Die Kontur einer Flaeche wird jetzt als EIN zusammenhaengendes
+  `create_spline_line`-Element ueber den ganzen geschlossenen
+  Eckpunktring erzeugt, statt vieler einzelner
+  `create_line_points`-Segmente je Kante. `schnitt_berechnung.py`
+  erzeugt dafuer bei geschlossenen Ketten keine `SchnittLinie`-Eintraege
+  mehr (nur noch die `SchnittFlaeche`) - `linien` im Zwischenformat
+  enthaelt jetzt nur noch echte offene Restfragmente (in der Praxis
+  bisher nie beobachtet).
+- 5 Beispiel-Schnitt-Definitionen fuer die Demo-IFC berechnet und
+  verifiziert (siehe Antwort im Chat) - fertig zum Einfuegen in die
+  Benutzerattribute 20-24 eines Testelements.
 Das erklaert vermutlich einen Teil der zuvor beobachteten
 "Dreiecke"/fehlerhaften Flaechen mit.
