@@ -18,7 +18,6 @@ Schnittberechnung ausserhalb von Cadwork passiert".
 
 from __future__ import annotations
 
-import glob
 import json
 import os
 import subprocess
@@ -32,7 +31,6 @@ from ifc_schnitt_importer.cadwork_api import elements as ec
 from ifc_schnitt_importer.cadwork_api import project as uc
 from ifc_schnitt_importer.shared.schnitt_definition import (
     SchnittDefinition,
-    SchnittDefinitionError,
     SchnittDefinitionExport,
     SchnittDefinitionFehler,
 )
@@ -84,11 +82,10 @@ class SchnittGeneratorService:
             if not text or not text.strip():
                 continue
 
-            try:
-                definition = SchnittDefinition.parse_from_text(text, source_element_id=element_id)
-                definitionen.append(definition)
-            except SchnittDefinitionError as e:
-                fehler.append(SchnittDefinitionFehler(element_id=element_id, fehler=str(e)))
+            geparste, zeilen_fehler = SchnittDefinition.parse_multiple_from_text(text, source_element_id=element_id)
+            definitionen.extend(geparste)
+            for meldung in zeilen_fehler:
+                fehler.append(SchnittDefinitionFehler(element_id=element_id, fehler=meldung))
 
         return SchnittDefinitionExport(definitionen=definitionen, fehler=fehler)
 

@@ -1,15 +1,21 @@
-"""Parser for the Schnitt-Definition stored in a Cadwork Benutzerattribut.
+"""Parser for die Schnitt-Definition(en) in einem Cadwork Benutzerattribut.
 
-Format (single line of text in one user attribute, see app/config.py
-SCHNITT_DEFINITION_ATTRIBUTE_NUMBER):
+Format (Text in einem Benutzerattribut, siehe app/config.py
+SchnittDefinitionConfig.ATTRIBUTE_NUMBER) - EINE Definition pro Zeile,
+dadurch koennen auf einem einzigen Element (z.B. einem Ausgabeelement)
+beliebig viele Schnitte definiert werden:
 
     Name=Schnitt A-A;Typ=vertikal;Ursprung=1234.5,6789.0,0;Richtung=0,1,0
+    Name=Grundriss EG;Typ=horizontal;Ursprung=0,0,1000;Richtung=0,0,1
 
 - Name: freier Text, wird als Schnittname verwendet (Zwischendatei-Name,
-  Cadwork-Gruppe beim Import)
+  Cadwork-Gruppe beim Import) - muss je Element eindeutig sein
 - Typ: "horizontal" oder "vertikal"
 - Ursprung: ein Punkt auf der Schnittebene, "x,y,z" in mm (Cadwork-Weltkoordinaten)
 - Richtung: die Ebenennormale, "x,y,z" (muss nicht normiert sein)
+
+Leere Zeilen werden ignoriert. Jede Zeile wird unabhaengig geparst - ein
+Fehler in einer Zeile verhindert nicht das Einlesen der uebrigen Zeilen.
 
 Diese Datei enthaelt keine Cadwork-Importe und kann daher sowohl vom
 Cadwork-Plugin (ifc_schnitt_importer) als auch vom externen Generator-Tool
@@ -82,6 +88,34 @@ class SchnittDefinition:
             raise SchnittDefinitionError("Richtung darf kein Nullvektor sein")
 
         return cls(name=name, typ=typ, ursprung=ursprung, richtung=richtung, source_element_id=source_element_id)
+
+    @classmethod
+    def parse_multiple_from_text(
+        cls, text: str, source_element_id: Optional[int] = None
+    ) -> Tuple[List["SchnittDefinition"], List[str]]:
+        """Parst mehrere Schnitt-Definitionen, eine pro Zeile.
+
+        Rueckgabe: (erfolgreich geparste Definitionen, Fehlermeldungen je
+        fehlerhafter Zeile inkl. Zeilennummer). Eine fehlerhafte Zeile
+        blockiert nicht die uebrigen.
+        """
+
+        definitionen: List["SchnittDefinition"] = []
+        fehler: List[str] = []
+
+        if not text:
+            return definitionen, fehler
+
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                definitionen.append(cls.parse_from_text(line, source_element_id=source_element_id))
+            except SchnittDefinitionError as e:
+                fehler.append(f"Zeile {line_number}: {e}")
+
+        return definitionen, fehler
 
     @staticmethod
     def _parse_point(value: str, field_name: str) -> Point3:

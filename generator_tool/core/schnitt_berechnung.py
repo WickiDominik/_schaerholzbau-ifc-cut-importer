@@ -147,6 +147,17 @@ def _chain_segments(
 ) -> List[Tuple[List[Point3], bool]]:
     """Verkettet Segmente zu Polylinien.
 
+    An normalen Punkten hat ein wasserdichtes Solid genau 2 anliegende
+    Segmente - eindeutig. An Verzweigungspunkten (>2 anliegende Segmente,
+    z.B. wenn eine Oeffnungskante numerisch nahe an einer Aussenkante zu
+    liegen kommt und beide auf denselben gerundeten Punkt fallen) wird
+    NICHT einfach der erste gefundene unbesuchte Anschluss genommen -
+    das kann den Ring an der falschen Stelle schliessen und ein
+    Dreieck/Fragment statt der vollen Kontur liefern. Stattdessen wird
+    die Fortsetzung gewaehlt, die am "geradesten" zur bisherigen
+    Laufrichtung passt (kleinster Winkel) - Standardtechnik beim
+    Rekonstruieren von Konturen aus Ebenenschnitt-Segmenten.
+
     Rueckgabe: Liste von (Punkte, ist_geschlossen). Bei geschlossenen
     Ketten ist der letzte Punkt eine Wiederholung des ersten (Ring).
     """
@@ -168,11 +179,35 @@ def _chain_segments(
 
     visited_edges: set = set()
 
-    def _next_unvisited(node_key):
-        for neighbor_key, edge_id in adjacency[node_key]:
-            if edge_id not in visited_edges:
-                return neighbor_key, edge_id
-        return None
+    def _next_step(node_key, incoming_direction):
+        """Waehlt unter den unbesuchten Anschluessen an `node_key` den mit
+        der geradesten Fortsetzung zu `incoming_direction` (normiert,
+        oder None fuer den allerersten Schritt einer Kette)."""
+
+        candidates = [(nk, eid) for nk, eid in adjacency[node_key] if eid not in visited_edges]
+        if not candidates:
+            return None
+        if len(candidates) == 1 or incoming_direction is None:
+            return candidates[0]
+
+        node_point = canonical[node_key]
+        best = candidates[0]
+        best_score = -2.0  # Kosinus liegt in [-1, 1]
+        for neighbor_key, edge_id in candidates:
+            direction = _sub(canonical[neighbor_key], node_point)
+            direction_len = math.sqrt(_dot(direction, direction))
+            if direction_len < 1e-9:
+                continue
+            cos_angle = _dot(incoming_direction, direction) / direction_len
+            if cos_angle > best_score:
+                best_score = cos_angle
+                best = (neighbor_key, edge_id)
+        return best
+
+    def _direction(from_key, to_key):
+        d = _sub(canonical[to_key], canonical[from_key])
+        d_len = math.sqrt(_dot(d, d))
+        return (d[0] / d_len, d[1] / d_len, d[2] / d_len) if d_len > 1e-9 else None
 
     chains: List[Tuple[List[Point3], bool]] = []
 
@@ -185,12 +220,14 @@ def _chain_segments(
         # Vorwaerts von kb weiterlaufen, bis kein unbesuchter Anschluss
         # mehr da ist oder wir zum Startpunkt ka zurueckkommen (Ring zu).
         current = kb
+        incoming = _direction(ka, kb)
         while True:
-            nxt = _next_unvisited(current)
+            nxt = _next_step(current, incoming)
             if nxt is None:
                 break
             neighbor_key, edge_id = nxt
             visited_edges.add(edge_id)
+            incoming = _direction(current, neighbor_key)
             chain_keys.append(neighbor_key)
             current = neighbor_key
             if current == ka:
@@ -201,12 +238,14 @@ def _chain_segments(
         if not is_closed:
             # Falls nicht geschlossen: auch rueckwaerts von ka aus verlaengern.
             current = ka
+            incoming = _direction(kb, ka)
             while True:
-                nxt = _next_unvisited(current)
+                nxt = _next_step(current, incoming)
                 if nxt is None:
                     break
                 neighbor_key, edge_id = nxt
                 visited_edges.add(edge_id)
+                incoming = _direction(current, neighbor_key)
                 chain_keys.insert(0, neighbor_key)
                 current = neighbor_key
 

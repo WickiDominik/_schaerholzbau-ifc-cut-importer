@@ -221,5 +221,31 @@ analog zu `shb_toolcenter.cadwork_api.cadwork_core`) plus
 `schnitt_importer/service.py`, bevor `create_polygon_panel`/
 `create_line_points` aufgerufen werden. Mit einem gefaelschten
 `cadwork`-Modul (das denselben Typfehler erzwingen wuerde, faellt bei
-falscher Konvertierung durch) erneut durchgetestet - naechster
-Livetest steht aus.
+falscher Konvertierung durch) erneut durchgetestet.
+
+**2026-08-10, 2. Durchlauf:** viele Flaechen kamen als Dreiecke statt
+mit allen Wand-Eckpunkten zurueck. Mit der Demo-IFC an ueber 100
+Ebenen (horizontal 0-3000mm, vertikal 15000-55000mm in 500mm-Schritten)
+nicht reproduzierbar (durchgehend korrekte Vierecke/Sechsecke/Achtecke)
+- vermutlich ein Sonderfall im echten Projekt (Oeffnung, Ecke, oder ein
+Punkt, an dem mehrere Schnittsegmente numerisch sehr nah zusammen-
+fallen). Wahrscheinlichste Ursache trotzdem behoben:
+`_chain_segments` in `schnitt_berechnung.py` wählte an Verzweigungs-
+punkten (>2 anliegende Segmente auf demselben gerundeten Punkt) bisher
+einfach die erste gefundene Fortsetzung - das kann eine Kette an der
+falschen Stelle schliessen und ein Fragment/Dreieck statt der vollen
+Kontur liefern. Jetzt wird die Fortsetzung gewaehlt, die am
+"geradesten" zur bisherigen Laufrichtung passt (kleinster Winkel,
+Standardtechnik beim Rekonstruieren von Konturen aus Schnittsegmenten).
+Regressionsgetestet (Wuerfel-Unit-Tests weiterhin gruen, Demo-IFC-Sweep
+weiterhin ohne Dreiecke) - **Bestaetigung am echten Projekt steht noch
+aus**, dafuer waere die betroffene `.ifccut.json`-Datei (oder die
+Schnitt-Definition, die zum Dreieck-Fall gefuehrt hat) hilfreich.
+
+**Mehrere Schnitte pro Element:** urspruenglich erlaubte das
+Benutzerattribut nur EINE Schnitt-Definition pro Element. Erweitert auf
+mehrere Definitionen, eine pro Zeile (`SchnittDefinition.
+parse_multiple_from_text`, siehe `shared/schnitt_definition.py`) - ein
+einzelnes Ausgabeelement kann damit beliebig viele Schnitte tragen.
+Fehlerhafte Zeilen blockieren die uebrigen nicht (Fehlermeldung
+enthaelt die Zeilennummer).
