@@ -6,3 +6,4 @@ ifc_schnitt_importer/settings/*.json
 ifc_schnitt_importer/shared/dependencies/site-packages-py*/
 !ifc_schnitt_importer/logs/.gitkeep
 !ifc_schnitt_importer/settings/.gitkeep
+generator_tool/.venv/

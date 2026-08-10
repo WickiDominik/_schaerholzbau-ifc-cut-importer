@@ -28,100 +28,132 @@ kein Wegwerf-Vergleichsbild).
 | Frage | Entscheidung |
 |---|---|
 | Was ist ein "Schnitt"? | Beides: horizontale (Geschoss-/Grundriss-) und vertikale (Bauschnitt-) Ebenen, konfigurierbar |
-| Woher kommt die Schnittlage? | Abgeleitet aus bestehenden **Cadwork-Ausgabeelementen** (Planausgabe-Objekte, die die Holzbauplanung bereits fuer ihre eigene 2D-Planausgabe - Grundrisse UND Schnitte - im 3D-Modell platziert) |
+| Woher kommt die Schnittlage? | Urspruenglich: abgeleitet aus bestehenden Cadwork-Ausgabeelementen. Nach Etappe-0-Spike geaendert auf: manuell als Benutzerattribut, siehe unten |
 | Zweck der importierten Fl./Lin. | Konstruktionsgrundlage fuer die Ausfuehrungsplanung - praezise, reproduzierbar, klar von echten Bauteilen getrennt |
 | Koordinatensystem | Vorerst 1:1 Uebernahme (IFC- und Cadwork-Modell teilen sich denselben Nullpunkt); spaetere Kalibrierung als Erweiterung offen |
 | Projektstruktur | Eigenstaendiges Cadwork-Plugin (eigener Ordner `_schaerholzbau-ifc-schnitt-importer`, eigene `plugin_info.xml`), ein Plugin mit zwei Menuepunkten (Generator + Importer) |
 
-## Warum kein ifcopenshell
+## Etappe 0 - Ergebnisse (API-Spike, 2026-08-10)
 
-Cadwork SP2026 laeuft auf Python 3.14 (siehe Toolcenter
-`docs/architecture.md`). `ifcopenshell` bietet aktuell keine Wheels fuer
-Python 3.13/3.14 (gepruefte PyPI-Metadaten, Stand 2026-08-10) - eine reine
-Python-IFC-Parsing-Loesung waere fuer SP2026 gar nicht installierbar.
+Der Anwender hat `ifc_schnitt_importer/tests/manual/api_spike.py` gegen
+die echte Cadwork-API laufen lassen. Ergebnisse und daraus folgende
+Architektur-Entscheidungen:
 
-**Stattdessen:** Cadworks eigener `bim_controller` bietet
-`import_ifc_return_exchange_objects(file_path)` - nativer, lagerichtiger
-IFC-Import als leichte "Exchange Objects" (keine vollwertigen Bauteile,
-kein Stuecklisten-Einfluss), plus `convert_exchange_objects(...)` um
-gezielt einzelne davon in echte Geometrie umzuwandeln. Das loest gleich
-zwei Probleme: keine externe Abhaengigkeit noetig, UND die IFC-Platzierung
-(Standort/Rotation) wird von Cadworks eigenem, ausgereiften IFC-Importer
-uebernommen statt selbst nachgebaut zu werden.
+1. **`bim_controller.import_ifc_return_exchange_objects` importiert
+   lagerichtig.** Bestaetigt die 1:1-Koordinatenannahme (siehe oben).
+2. **Es gibt (noch) keine API, um die Ebene eines Ausgabeelements
+   auszulesen.** Workaround: die Schnitt-Definition (Name, Typ, Ursprung,
+   Richtung) wird stattdessen manuell als strukturierter Text in einem
+   Cadwork-Benutzerattribut hinterlegt - siehe Abschnitt
+   "Schnitt-Definition (Benutzerattribut)" unten.
+3. **`element_controller.cut_element_with_plane` ist fuer diesen
+   Anwendungsfall ungeeignet.** Es schneidet ein *echtes* Cadwork-Element
+   entlang Punkt+Normale und liefert die ID des abgeschnittenen Teils
+   zurueck - funktioniert nicht mit den leichten Exchange Objects des
+   IFC-Imports. **Konsequenz: die Schnittberechnung (IFC-Geometrie x
+   Ebene) findet nicht mehr in Cadwork statt**, sondern in einem
+   eigenstaendigen externen Tool (`generator_tool/`, eigenes Python +
+   `ifcopenshell`, siehe "Warum ausserhalb von Cadwork" unten).
+4. **Cadwork uebernimmt IFC-Types, -Storeys und -Buildings korrekt** beim
+   Import. Aktuell nicht mehr im kritischen Pfad (siehe Punkt 3), evtl.
+   spaeter nuetzlich fuer Building/Storey-Zuordnung der importierten
+   Referenzgeometrie.
 
-Quelle: [docs.cadwork.com - bim_controller](https://docs.cadwork.com/projects/cwapi3dpython/en/latest/documentation/bim_controller/)
+## Warum die Schnittberechnung ausserhalb von Cadwork passiert
+
+Aus Punkt 3 oben: Cadworks eigene API bietet kein Werkzeug, um ein
+IFC-Bauteil sauber mit einer Ebene zu schneiden und ein 2D-Schnittprofil
+(Polygon/Linien) zurueckzubekommen. Gleichzeitig loest das ein zweites
+Problem: Cadwork SP2026 laeuft auf Python 3.14 (siehe Toolcenter
+`docs/architecture.md`), und `ifcopenshell` bietet aktuell keine Wheels
+fuer Python 3.13/3.14 (gepruefte PyPI-Metadaten, Stand 2026-08-10) - eine
+Loesung *innerhalb* von Cadworks eingebettetem Python waere fuer SP2026
+also ohnehin nicht moeglich gewesen.
+
+**Deshalb:** die eigentliche IFC-Geometrie-Verarbeitung (`ifcopenshell`,
+Ebenen-Schnitt) laeuft in `generator_tool/` als eigenstaendiges
+Kommandozeilen-Tool mit eigener, von Cadwork komplett unabhaengiger
+Python-Umgebung (z.B. 3.12, siehe `generator_tool/README.md`). Cadworks
+`bim_controller.import_ifc_return_exchange_objects` (Punkt 1 oben) wird
+dafuer nicht mehr gebraucht; die bestaetigte 1:1-Lagerichtigkeit ist aber
+weiterhin relevant, weil sie zeigt, dass Cadworks Weltkoordinaten mit den
+rohen IFC-Koordinaten uebereinstimmen - `ifcopenshell`-Geometrie kann also
+direkt (ohne Cadwork als Zwischenschritt) uebernommen werden.
+
+Quelle Cadwork-API: [docs.cadwork.com - bim_controller](https://docs.cadwork.com/projects/cwapi3dpython/en/latest/documentation/bim_controller/)
 (abgerufen 2026-08-10).
 
-## Architektur
+## Schnitt-Definition (Benutzerattribut)
 
-Zwei-Phasen-Workflow mit Zwischenformat (analog zum bestehenden
-`.cut3d`-Muster in `shb_toolcenter/features/cut_handling`):
+Da die Ausgabeelement-Ebene nicht per API lesbar ist, definiert der
+Anwender die Schnitt-Definition manuell in EINEM Cadwork-Benutzerattribut
+(Nummer siehe `app/config.py` -> `SchnittDefinitionConfig`, aktuell 20)
+auf dem Ausgabeelement (oder jedem anderen Referenzelement) als
+strukturierter Text:
 
-```
-Phase A - Schnitt-Generator                Phase B - Schnitt-Importer
---------------------------------           ---------------------------
-1. IFC laden (bim_controller.              1. Zwischendatei(en) waehlen
-   import_ifc_return_exchange_objects)     2. Je Schnitt: Flaechen
-2. Ausgabeelement(e) waehlen ->               (create_polygon_panel) +
-   Ursprung + Normale + Ausdehnung             Linien (create_line_points)
-3. Je Schnitt: betroffene Exchange-           an IFC-Originalposition
-   Objects konvertieren, mit Ebene            erzeugen, eigene Gruppe
-   schneiden (cut_element_with_plane)         "IFC-Referenz - <Name>"
-4. Ergebnis in Zwischenformat               3. Vorherigen Import desselben
-   schreiben (siehe shared/schnitt_          Schnitts ersetzen
-   format.py): <projekt>_<schnitt>
-   .ifccut.json
+```text
+Name=Schnitt A-A;Typ=vertikal;Ursprung=1234.5,6789.0,0;Richtung=0,1,0
 ```
 
-Warum die Trennung: einmal generieren (rechenintensiv, ganze IFC),
-beliebig oft / von mehreren Personen importieren, ohne die IFC jedes Mal
-neu zu parsen.
+- `Name`: Schnittname (Zwischendatei-Name, Cadwork-Gruppe beim Import)
+- `Typ`: `horizontal` oder `vertikal`
+- `Ursprung`: ein Punkt auf der Schnittebene, `x,y,z` in mm (Cadwork-Weltkoordinaten)
+- `Richtung`: die Ebenennormale, `x,y,z` (muss nicht normiert sein)
 
-## Offene technische Punkte (Etappe 0 - Spike)
+Parser + Validierung: [`ifc_schnitt_importer/shared/schnitt_definition.py`](../ifc_schnitt_importer/shared/schnitt_definition.py).
+Das Cadwork-Plugin (Menuepunkt "IFC Schnitt Generator") scannt alle
+Elemente, liest dieses Attribut, validiert es und schreibt eine
+Bruecken-Datei `schnitt_definitionen.json` fuer das externe Tool.
 
-Aus der Online-API-Doku (docs.cadwork.com) konnten folgende Punkte NICHT
-abschliessend verifiziert werden (Doku-Seiten teils zu lang fuer
-automatisiertes Abrufen) und muessen direkt in Cadwork getestet werden,
-bevor Etappe 2/3 darauf aufbauen:
+## Architektur (3 Stufen)
 
-1. **Ausgabeelement-Ebene auslesen**: Vermutung - generische
-   `geometry_controller`-Funktionen (`get_p1`, `get_xl`, `get_yl`,
-   `get_zl`) liefern Ursprung + lokale Achsen auch fuer Ausgabeelemente,
-   da sie fuer jedes Element mit lokalem Koordinatensystem gelten sollten.
-2. **`cut_element_with_plane`**: Existenz in `element_controller`
-   mehrfach bestaetigt, genaue Signatur/Verhalten (mutiert das Element
-   oder liefert es ein neues Schnitt-Ergebnis?) unklar.
-3. **Bounding/Positionierung nach IFC-Import**: bestaetigen, dass
-   `import_ifc_return_exchange_objects` tatsaechlich lagerichtig
-   (gleiche Koordinaten wie im IFC) importiert.
-4. **Geschoss-System**: pruefen, ob `bim_controller.get_all_storeys` nach
-   IFC-Import die IFC-Storeys widerspiegelt (fuer horizontale Schnitte
-   evtl. eine zusaetzliche/alternative Hoehenquelle zu den
-   Ausgabeelementen).
+Drei-Stufen-Workflow mit Zwischenformaten (Grundidee weiterhin analog
+zum bestehenden `.cut3d`-Muster in `shb_toolcenter/features/cut_handling`
+- einmal generieren, beliebig oft/von mehreren Personen importieren):
 
-Testskript: [`ifc_schnitt_importer/tests/manual/api_spike.py`](../ifc_schnitt_importer/tests/manual/api_spike.py).
-Ergebnis bitte zurueckmelden (Konsolen-Output oder die generierte
-`logs/api_spike_results.json`), dann werten wir das gemeinsam aus und
-schaerfen Etappe 2/3 entsprechend nach.
+```
+Stufe 1 (Cadwork-Plugin)         Stufe 2 (generator_tool/, extern)        Stufe 3 (Cadwork-Plugin)
+---------------------------      -------------------------------------    -------------------------
+"IFC Schnitt Generator":         schnitt_generator.py --ifc ... :         "IFC Schnitt Importer":
+scannt Benutzerattribute         laedt IFC (ifcopenshell),                liest jede .ifccut.json,
+-> schnitt_definitionen.json     berechnet je Definition den              erzeugt Flaechen
+   (SchnittDefinition-Liste)     Ebenenschnitt (Etappe 3, offen)          (create_polygon_panel) +
+                                 -> <projekt>_<name>.ifccut.json           Linien (create_line_points)
+                                    (SchnittErgebnis)                      an IFC-Originalposition,
+                                                                            eigene Gruppe
+                                                                            "IFC-Referenz - <Name>"
+```
 
-## Datenformat (Generator -> Importer)
+Alle drei Stufen teilen sich denselben `IFC_Schnitte`-Ordner neben der
+3D-Datei (`app/config.py` -> `PathConfig`).
 
-Siehe [`ifc_schnitt_importer/shared/schnitt_format.py`](../ifc_schnitt_importer/shared/schnitt_format.py)
-fuer die konkreten Datenklassen (`SchnittEbene`, `SchnittFlaeche`,
-`SchnittLinie`, `SchnittErgebnis`) und JSON (de)serialisierung.
+## Datenformat
+
+- **Schnitt-Definition** (Stufe 1 -> Stufe 2): [`ifc_schnitt_importer/shared/schnitt_definition.py`](../ifc_schnitt_importer/shared/schnitt_definition.py)
+- **Schnitt-Ergebnis** (Stufe 2 -> Stufe 3): [`ifc_schnitt_importer/shared/schnitt_format.py`](../ifc_schnitt_importer/shared/schnitt_format.py)
+  (`SchnittEbene`, `SchnittFlaeche`, `SchnittLinie`, `SchnittErgebnis`)
+
+Beide Module sind reines Python ohne Cadwork-Importe und werden von
+*beiden* Seiten (Cadwork-Plugin UND `generator_tool/`) importiert - ein
+einziges, gemeinsames Format statt zweier Implementierungen.
 
 ## Etappenplan
 
-- [x] **Etappe 0**: API-Spike (offene Punkte oben verifizieren)
+- [x] **Etappe 0**: API-Spike (Ergebnisse oben)
 - [x] **Etappe 1**: Projekt-Grundgeruest, Plugin-Registrierung, Menu mit
-      zwei Platzhalter-Fenstern (dieser Stand)
-- [ ] **Etappe 2**: Generator - Ausgabeelement-Auswahl-UI + Schnittebene-
-      Extraktion (`SchnittGeneratorService.list_ausgabeelemente` /
-      `get_schnittebene`)
-- [ ] **Etappe 3**: Generator - IFC-Import + Schnittberechnung +
-      Export der Zwischendatei (`import_ifc` / `berechne_schnitt`)
-- [ ] **Etappe 4**: Importer - Zwischendatei einlesen, Flaechen/Linien
-      erzeugen, alten Import ersetzen (`SchnittImporterService.import_schnitt`)
+      zwei Fenstern
+- [x] **Etappe 2**: Cadwork-Plugin - Schnitt-Definitionen aus
+      Benutzerattributen scannen + `schnitt_definitionen.json` exportieren
+      (`SchnittGeneratorService.export_schnitt_definitionen`, UI in
+      `features/schnitt_generator/window.py`)
+- [ ] **Etappe 3**: `generator_tool/` - echte `ifcopenshell`-Anbindung
+      (`core/ifc_reader.py`) + Ebenen-Schnittberechnung
+      (`core/schnitt_berechnung.py`); CLI-Geruest (`schnitt_generator.py`)
+      steht bereits
+- [ ] **Etappe 4**: Cadwork-Plugin - Importer: Zwischendateien einlesen,
+      Flaechen/Linien erzeugen, alten Import ersetzen
+      (`SchnittImporterService.import_schnitt`)
 - [ ] **Etappe 5**: UI/UX-Feinschliff (Fortschrittsanzeige, Fehlerbilder,
-      Vorschau vor Import)
+      Vorschau vor Import, Knopf um `generator_tool` direkt aus Cadwork
+      anzustossen)
 - [ ] **Etappe 6**: Test mit echten Projektdaten, Rollout

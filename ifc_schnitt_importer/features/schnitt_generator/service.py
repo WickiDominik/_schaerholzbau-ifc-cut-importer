@@ -1,73 +1,89 @@
-"""Business logic for the IFC Schnitt Generator.
+"""Business logic for the Cadwork-side half of the IFC Schnitt Generator.
 
-STATUS: Etappe 1 (Skeleton). The methods below define the intended flow
-and are the concrete implementation targets for Etappe 2/3 - see
-docs/konzept.md for the staged plan and docs/api_spike_ergebnisse.md
-(created after Etappe 0) for the confirmed Cadwork API calls.
+STATUS: Etappe 2 (implementiert). Die eigentliche IFC-Geometrie-/
+Schnittberechnung (frueher hier geplant) laeuft NICHT mehr in Cadwork -
+siehe docs/konzept.md, Abschnitt "Warum die Schnittberechnung ausserhalb
+von Cadwork passiert". Diese Klasse deckt nur noch den Cadwork-seitigen
+Teil ab: Schnitt-Definitionen (Benutzerattribute) aus dem Modell lesen
+und als Bruecken-Datei fuer das externe generator_tool/ exportieren.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import List, Optional
+import json
+from dataclasses import asdict
+from typing import List
 
-from ifc_schnitt_importer.shared.schnitt_format import SchnittEbene, SchnittErgebnis
-
-
-@dataclass
-class AusgabeelementKandidat:
-    """One selectable Cadwork Ausgabeelement/Achse, shown in the UI."""
-
-    element_id: int
-    name: str
-    schnitt_typ: str  # "horizontal" | "vertikal"
+from ifc_schnitt_importer.app.config import PathConfig, SchnittDefinitionConfig
+from ifc_schnitt_importer.cadwork_api import attributes as ac
+from ifc_schnitt_importer.cadwork_api import elements as ec
+from ifc_schnitt_importer.cadwork_api import project as uc
+from ifc_schnitt_importer.shared.schnitt_definition import (
+    SchnittDefinition,
+    SchnittDefinitionError,
+    SchnittDefinitionExport,
+    SchnittDefinitionFehler,
+)
 
 
 class SchnittGeneratorService:
-    """Coordinates IFC import and Schnitt computation.
+    """Cadwork-side step: Schnitt-Definitionen aus dem Modell exportieren."""
 
-    Etappe 2 implements `list_ausgabeelemente` + `get_schnittebene`.
-    Etappe 3 implements `import_ifc` + `berechne_schnitt`.
-    """
+    def ensure_attribute_label(self) -> None:
+        """Label the configured Benutzerattribut slot so it's recognisable
+        in Cadwork's attribute dialog (best-effort, never fails hard)."""
 
-    def list_ausgabeelemente(self) -> List[AusgabeelementKandidat]:
-        """Return Ausgabeelemente/Achsen currently in the model to choose from.
+        try:
+            ac.set_user_attribute_name(SchnittDefinitionConfig.ATTRIBUTE_NUMBER, SchnittDefinitionConfig.ATTRIBUTE_LABEL)
+        except Exception as e:
+            print(f"[schnitt_generator] Konnte Attribut-Beschriftung nicht setzen: {e}")
 
-        TODO (Etappe 2): implement via element selection + geometry_controller
-        (get_p1/get_xl/get_yl/get_zl), pending Etappe 0 verification.
+    def scan_schnitt_definitionen(self) -> SchnittDefinitionExport:
+        """Scan all identifiable elements for a filled Schnitt-Definition attribute."""
+
+        definitionen: List[SchnittDefinition] = []
+        fehler: List[SchnittDefinitionFehler] = []
+
+        element_ids = ec.get_all_identifiable_element_ids()
+        for element_id in element_ids:
+            try:
+                text = ac.get_user_attribute(element_id, SchnittDefinitionConfig.ATTRIBUTE_NUMBER)
+            except Exception as e:
+                # Best-effort: a single unreadable element must not abort the whole scan.
+                fehler.append(SchnittDefinitionFehler(element_id=element_id, fehler=f"Attribut nicht lesbar: {e}"))
+                continue
+
+            if not text or not text.strip():
+                continue
+
+            try:
+                definition = SchnittDefinition.parse_from_text(text, source_element_id=element_id)
+                definitionen.append(definition)
+            except SchnittDefinitionError as e:
+                fehler.append(SchnittDefinitionFehler(element_id=element_id, fehler=str(e)))
+
+        return SchnittDefinitionExport(definitionen=definitionen, fehler=fehler)
+
+    def export_schnitt_definitionen(self) -> tuple[SchnittDefinitionExport, str]:
+        """Scan + write the bridging file for the external generator_tool.
+
+        Returns (scan_result, written_file_path).
         """
 
-        raise NotImplementedError("Etappe 2: Ausgabeelement-Auswahl")
+        result = self.scan_schnitt_definitionen()
 
-    def get_schnittebene(self, element_id: int) -> SchnittEbene:
-        """Derive a cutting plane (origin + normal) from a chosen element.
+        project_3d_file_path = uc.get_3d_file_path()
+        target_path = PathConfig.get_schnitt_definitionen_file_path(project_3d_file_path)
 
-        TODO (Etappe 2).
-        """
+        import os
 
-        raise NotImplementedError("Etappe 2: Schnittebene-Extraktion")
+        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+        payload = {
+            "projekt_nummer": uc.get_project_number(),
+            "quelle_3d_datei": project_3d_file_path,
+            "definitionen": [asdict(d) for d in result.definitionen],
+        }
+        with open(target_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
 
-    def import_ifc(self, ifc_file_path: str) -> List[int]:
-        """Import the IFC file via bim_controller and return exchange object ids.
-
-        TODO (Etappe 3): ifc_schnitt_importer.cadwork_api.bim.import_ifc_return_exchange_objects
-        """
-
-        raise NotImplementedError("Etappe 3: IFC-Import")
-
-    def berechne_schnitt(
-        self,
-        schnitt_name: str,
-        schnitt_typ: str,
-        ebene: SchnittEbene,
-        exchange_object_ids: List[int],
-        ifc_file_path: str,
-        projekt_nummer: str,
-    ) -> SchnittErgebnis:
-        """Compute the cross-section geometry for one Schnitt.
-
-        TODO (Etappe 3): convert relevant exchange objects, cut them with
-        the plane, collect resulting Flaechen/Linien.
-        """
-
-        raise NotImplementedError("Etappe 3: Schnittberechnung")
+        return result, target_path
