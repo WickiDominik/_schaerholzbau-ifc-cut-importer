@@ -4,16 +4,15 @@ STATUS: Etappe 4/6 (implementiert, mehrfach live getestet - siehe
 docs/konzept.md). Liest eine vom generator_tool erzeugte .ifccut.json
 und erzeugt:
 
-- je Flaeche eine Panel-Flaeche (create_polygon_panel, geschlossener
-  Eckpunktring inkl. Schlusspunkt) UND je Kante des Umrings ein eigenes
-  2-Punkt-Linienelement (create_line_points) - ein Cadwork-Linienelement
-  traegt maximal 2 Punkte, "verbunden" heisst hier: alle Kanten inkl.
-  der Schlusskante zurueck zum ersten Punkt werden erzeugt, sodass sich
-  die Segmente an den Eckpunkten treffen (kein separates
-  Mehrpunkt-/Spline-Element - das wurde live verworfen, siehe
-  docs/konzept.md).
+- je Flaeche eine flache Referenzflaeche (create_surface, OHNE Dicke -
+  es handelt sich um einen Schnitt/Vergleichsreferenz, kein reales
+  Bauteil, daher kein Panel/Platte mit Materialstaerke).
+- KEINE eigene Kontur-Linie je Flaeche mehr: eine gefuellte Flaeche
+  zeigt ihren Umriss in Cadwork bereits selbst, eine zusaetzliche
+  Linien-Umrandung waere redundant (auf Anwenderwunsch entfernt).
 - je restlichem offenem Liniensegment (Sonderfall, siehe
-  schnitt_berechnung.py) ebenfalls einzelne create_line_points-Elemente.
+  schnitt_berechnung.py - eine Kette OHNE zugehoerige Flaeche) weiterhin
+  einzelne create_line_points-Elemente.
 
 Alle erzeugten Elemente bekommen BUG (Bauuntergruppe) =
 ReferenceGeometryConfig.BAUUNTERGRUPPE ("Grundrisse/Schnitte", gleiche
@@ -35,7 +34,6 @@ from ifc_schnitt_importer.cadwork_api import cadwork_core as cw
 from ifc_schnitt_importer.cadwork_api import elements as ec
 from ifc_schnitt_importer.cadwork_api import visualization as vc
 from ifc_schnitt_importer.shared.schnitt_format import SchnittErgebnis, load_schnitt_ergebnis
-from ifc_schnitt_importer.shared.vector_math import normalize, subtract
 
 
 def _point_3d(p):
@@ -110,8 +108,6 @@ class SchnittImporterService:
         if old_ids:
             ec.delete_elements_with_undo(old_ids)
 
-        normal = normalize(tuple(ergebnis.ebene.normal))
-
         flaeche_ids: List[int] = []
         linie_ids: List[int] = []
         fehler: List[SchnittImportFehler] = []
@@ -120,38 +116,20 @@ class SchnittImporterService:
             vertices = [tuple(v) for v in flaeche.vertices]
             if len(vertices) < 3:
                 continue
-            x_direction = self._safe_x_direction(vertices, normal)
-            # create_polygon_panel schliesst den Umriss NICHT selbst - der
-            # letzte Punkt muss explizit eine Wiederholung des ersten sein,
-            # sonst fehlt die letzte Kante (live beobachtet). ergebnis.
-            # flaechen speichert das einfache, nicht-geschlossene Polygon
-            # (siehe schnitt_format.py) - hier fuer den Panel-Aufruf
-            # explizit schliessen.
-            closed_vertices = vertices + [vertices[0]]
+            # create_surface erzeugt eine FLACHE Referenzflaeche ohne
+            # Dicken-Parameter (anders als create_polygon_panel) - passend
+            # fuer einen Schnitt/eine Vergleichsreferenz statt eines
+            # echten Bauteils. Ob der Umriss geschlossen (Schlusspunkt
+            # dupliziert) uebergeben werden muss, ist bisher nicht live
+            # verifiziert (anders als bei create_polygon_panel/
+            # create_spline_line, die sich gegensaetzlich verhalten
+            # haben) - hier zunaechst wie bei create_spline_line NICHT
+            # geschlossen versucht, ggf. beim naechsten Livetest anpassen.
             try:
-                eid = ec.create_polygon_panel(
-                    _vertex_list(closed_vertices),
-                    ReferenceGeometryConfig.SURFACE_THICKNESS_MM,
-                    _point_3d(x_direction),
-                    _point_3d(normal),
-                )
+                eid = ec.create_surface(_vertex_list(vertices))
                 flaeche_ids.append(eid)
             except Exception as e:
                 fehler.append(SchnittImportFehler(f"Flaeche ({flaeche.ifc_element_type} {flaeche.ifc_guid}): {e}"))
-
-            # Kontur: je Kante ein eigenes 2-Punkt-Linienelement
-            # (create_line_points) - ein Cadwork-Linienelement kann keine
-            # mehr als 2 Punkte tragen (create_spline_line war der falsche
-            # Ansatz - live verworfen, siehe docs/konzept.md). "Verbunden"
-            # heisst hier: alle Kanten des geschlossenen Umrings inkl. der
-            # Schlusskante zurueck zum ersten Punkt, die Segmente teilen
-            # sich also an den Eckpunkten - nicht ein einzelnes Element.
-            for i in range(len(closed_vertices) - 1):
-                try:
-                    eid = ec.create_line_points(_point_3d(closed_vertices[i]), _point_3d(closed_vertices[i + 1]))
-                    linie_ids.append(eid)
-                except Exception as e:
-                    fehler.append(SchnittImportFehler(f"Kontur-Kante ({flaeche.ifc_element_type} {flaeche.ifc_guid}): {e}"))
 
         for linie in ergebnis.linien:
             # Restfaelle: offene (nicht geschlossene) Segmentketten, siehe
@@ -188,30 +166,3 @@ class SchnittImporterService:
             erzeugte_linien=len(linie_ids),
             fehler=fehler,
         )
-
-    @staticmethod
-    def _safe_x_direction(vertices, normal) -> tuple:
-        """Eine In-Ebene-Richtung fuer die lokale X-Achse des Panels.
-
-        Nimmt die erste Polygonkante; bei (praktisch) entarteten
-        Polygonen faellt sie auf eine beliebige zur Normalen senkrechte
-        Richtung zurueck, damit create_polygon_panel nie an einem
-        Nullvektor scheitert.
-        """
-
-        for i in range(len(vertices) - 1):
-            edge = subtract(vertices[i + 1], vertices[i])
-            if edge != (0.0, 0.0, 0.0):
-                try:
-                    return normalize(edge)
-                except ValueError:
-                    continue
-
-        # Fallback: irgendein Vektor senkrecht zur Normalen.
-        fallback = (1.0, 0.0, 0.0) if abs(normal[0]) < 0.9 else (0.0, 1.0, 0.0)
-        cross = (
-            normal[1] * fallback[2] - normal[2] * fallback[1],
-            normal[2] * fallback[0] - normal[0] * fallback[2],
-            normal[0] * fallback[1] - normal[1] * fallback[0],
-        )
-        return normalize(cross)

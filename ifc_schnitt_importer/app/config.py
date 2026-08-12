@@ -115,9 +115,6 @@ class ReferenceGeometryConfig:
     SURFACE_COLOR = 8
     COMMENT_TAG = "ifc_schnitt_import"
 
-    # Duenne, rein visuelle Referenzflaeche (kein Bauteil) - Staerke in mm.
-    SURFACE_THICKNESS_MM = 1.0
-
     # Benutzerattribut-Nummer, die bei jedem importierten Element den
     # Schnittnamen traegt - dient dem Wiederfinden/Ersetzen bei erneutem
     # Import desselben Schnitts. Bewusst getrennt von

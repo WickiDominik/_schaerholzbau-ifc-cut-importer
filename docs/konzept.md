@@ -317,6 +317,32 @@ provoziert (`_simplify_collinear` direkt getestet), sowie ein Test, der
 ein bewusst kaputtes Bauteil neben einem guten verarbeitet und prueft,
 dass das gute Bauteil trotzdem im Ergebnis landet.
 
+**11. Durchlauf - Vereinfachung auf Anwenderwunsch (mehr Bauteile
+generiert, Feinschliff):** nach dem Crash-Fix liefen deutlich mehr
+Bauteile durch. Zwei Vereinfachungen:
+
+1. Flaechen wurden bisher als `create_polygon_panel` (Platte MIT
+   Dicke, `SURFACE_THICKNESS_MM`) erzeugt - fuer eine reine Schnitt-
+   Referenz unnoetig ("als Schnitt wuerde reichen"). Umgestellt auf
+   `element_controller.create_surface(vertex_list)` - eine flache
+   Flaeche ganz ohne Dicken-Parameter. `SURFACE_THICKNESS_MM` entfernt
+   (nicht mehr gebraucht). Unklar/noch nicht live verifiziert: ob
+   `create_surface` den Umriss geschlossen (Schlusspunkt dupliziert,
+   wie `create_polygon_panel`) oder offen (wie `create_spline_line`)
+   erwartet - hier zunaechst offen (nicht dupliziert) versucht.
+2. Jede Flaeche erzeugte zusaetzlich ihre Kontur als einzelne
+   2-Punkt-Linien je Kante ("verbinde jeden Schnitt", siehe fruehere
+   Eintraege) - das ist redundant, da eine gefuellte Flaeche ihren
+   Umriss in Cadwork bereits selbst zeigt. Diese Kantenlinien-Erzeugung
+   komplett entfernt; `ergebnis.linien` (nur echte offene
+   Segmentketten ohne zugehoerige Flaeche, in der Praxis bislang nie
+   beobachtet) wird weiterhin als einzelne `create_line_points`-
+   Elemente importiert. `_safe_x_direction`-Hilfsmethode entfernt
+   (nur fuer die Panel-Richtung gebraucht, jetzt ueberfluessig).
+
+Mock-Dry-Run entsprechend angepasst und gruen (Flaechenanzahl ==
+create_surface-Aufrufe, keine Kantenlinien mehr, nur echte Restlinien).
+
 ## Etappenplan
 
 - [x] **Etappe 0**: API-Spike (Ergebnisse oben)
