@@ -19,9 +19,7 @@ from typing import Iterator, List, Tuple
 Point3 = Tuple[float, float, float]
 Triangle = Tuple[Point3, Point3, Point3]
 
-# Bauteilklassen, die in die Schnittberechnung einfliessen. Bewusst OHNE
-# Tueren/Fenster (nur Rohbau-relevant fuer den Holzbau-Vergleich) - bei
-# Bedarf spaeter mit dem Anwender erweitern/einschraenken.
+# Bauteilklassen, die in die Schnittberechnung einfliessen.
 #
 # IfcBuildingElementPart ist bewusst dabei: mehrschichtige Waende (z.B.
 # Vectorworks-Fassadenaufbauten) werden oft als "leere" IfcWall (nur
@@ -30,6 +28,18 @@ Triangle = Tuple[Point3, Point3, Point3]
 # (Aussenschalung, Daemmung, OSB, ...) aufgeteilt ist - live an einem
 # grossen Projekt-IFC beobachtet. Ohne diese Klasse geht die gesamte
 # Wandgeometrie solcher Waende verloren.
+#
+# IfcWindow/IfcDoor, IfcCovering (Daemmung, Bodenbelag, Trittschall,
+# Fensterleibungen/Simselemente), IfcBuildingElement (generische
+# Bauteile - bei Vectorworks-Exporten live beobachtet z.B. CLT-Element,
+# Gipsfaserplatte, Column direkt ueber die Basisklasse statt eines
+# spezifischeren Typs) und IfcBuildingElementProxy (u.a.
+# Fensterleibungen, "Opferbrett") wurden ergaenzt, nachdem der Anwender
+# fehlende Fenster/Lisenen im Ergebnis gemeldet hat - siehe
+# docs/konzept.md, Etappe 6. IfcOpeningElement bewusst NICHT dabei
+# (reine Abzugs-Volumen fuer Boolean-Subtraktion, keine sichtbare
+# Geometrie); MEP (IfcFlowTerminal/-Fitting) und IfcFurnishingElement
+# bewusst nicht - fuer den Holzbau-Vergleich nicht relevant.
 RELEVANT_IFC_CLASSES = (
     "IfcWall",
     "IfcWallStandardCase",
@@ -38,6 +48,14 @@ RELEVANT_IFC_CLASSES = (
     "IfcBeam",
     "IfcFooting",
     "IfcBuildingElementPart",
+    "IfcWindow",
+    "IfcDoor",
+    "IfcCovering",
+    "IfcBuildingElement",
+    "IfcBuildingElementProxy",
+    "IfcRailing",
+    "IfcStair",
+    "IfcRoof",
 )
 
 
@@ -102,14 +120,36 @@ def lade_bauteile(ifc_file_path: str, ifc_classes: Tuple[str, ...] = RELEVANT_IF
     # skaliert - fuer jede Datei-Einheit richtig, nicht nur fuer Meter.
     settings.set(settings.CONVERT_BACK_UNITS, True)
 
-    # Elemente koennen ueber mehrere IFC-Klassen mehrfach erfasst werden
-    # (z.B. IfcWall UND IfcWallStandardCase existieren in derselben Datei
-    # praktisch nie fuer dasselbe Element, aber zur Sicherheit ueber GUID
-    # deduplizieren).
+    # include_subtypes=False ist hier wichtig: IFC-Klassen bilden eine
+    # Vererbungshierarchie (z.B. ist IfcWallStandardCase ein Subtyp von
+    # IfcWall, und praktisch ALLE unserer Klassen - Wand, Fenster, Tuer,
+    # Covering, ... - sind Subtypen von IfcBuildingElement). Mit dem
+    # Default (include_subtypes=True) liefert by_type("IfcBuildingElement")
+    # deshalb NICHT nur generische Elemente, sondern zusaetzlich JEDE
+    # Wand/Stuetze/Traeger/... nochmal - live beobachtet: 5930 statt 32
+    # tatsaechliche IfcBuildingElement-Instanzen an einem grossen
+    # Projekt-IFC, was die Ladezeit durch massenhaftes redundantes
+    # Pruefen/Uebersetzen bereits verarbeiteter Elemente vervielfacht hat.
+    # Da hier jede relevante Klasse ohnehin einzeln aufgefuehrt ist
+    # (inkl. IfcWallStandardCase separat von IfcWall), geht durch
+    # include_subtypes=False keine Abdeckung verloren.
     seen_guids = set()
 
+    # Grobe Fortschrittsanzeige - bei grossen Projekten (mehrere tausend
+    # Bauteile, z.B. nach Erweiterung um Fenster/Covering/BuildingElement)
+    # kann das Laden mehrere Minuten dauern; ohne Lebenszeichen wirkt das
+    # sonst wie ein Haenger.
+    total_candidates = sum(len(ifc_file.by_type(c, include_subtypes=False)) for c in ifc_classes)
+    processed = 0
+    progress_step = max(500, total_candidates // 20 or 1)
+    print(f"[ifc_reader] {total_candidates} Kandidaten-Elemente in {len(ifc_classes)} Klassen zu pruefen ...")
+
     for ifc_class in ifc_classes:
-        for element in ifc_file.by_type(ifc_class):
+        for element in ifc_file.by_type(ifc_class, include_subtypes=False):
+            processed += 1
+            if processed % progress_step == 0:
+                print(f"[ifc_reader] ... {processed}/{total_candidates} geprueft")
+
             if element.GlobalId in seen_guids:
                 continue
 

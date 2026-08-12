@@ -243,6 +243,51 @@ IfcBuildingElementPart, u.a. ein zuvor fehlender Stahlbeton-
 Fertigteiltraeger), WDC3 bei OG+1m 647 statt 423 Flaechen (+224, exakt
 die neu erfassten Fassadenschichten).
 
+**9. Durchlauf - fehlende Bauteilklassen (Fenster, "Lisenen", ...):**
+Anwender meldete, dass Fenster und weitere Bauteile im Ergebnis fehlen.
+`RELEVANT_IFC_CLASSES` deckte urspruenglich nur den Rohbau ab (Wand,
+Decke, Stuetze, Traeger, Fundament, + BuildingElementPart). Analyse der
+tatsaechlichen Klassenlandschaft von WDC3 (direkter Dateizugriff):
+`IfcCovering` (1769x - Daemmung, Bodenbelag, Trittschall, aber auch
+"Simselement"/Fensterleibungen - vermutlich das, was als "Lisenen"
+gemeint war) und `IfcBuildingElement` (5930x als Basisklasse direkt
+verwendet - CLT-Element, Gipsfaserplatte, Column) waren komplett
+uebersehene Kategorien. Ergaenzt: `IfcWindow`, `IfcDoor`,
+`IfcCovering`, `IfcBuildingElement`, `IfcBuildingElementProxy`,
+`IfcRailing`, `IfcStair`, `IfcRoof`. Bewusst NICHT ergaenzt:
+`IfcOpeningElement` (reine Abzugsvolumen, keine sichtbare Geometrie),
+MEP (`IfcFlowTerminal`/`-Fitting`) und `IfcFurnishingElement` (fuer den
+Holzbau-Vergleich nicht relevant).
+
+Dabei entdeckt: `IfcBuildingElement` ist in IFC die **Oberklasse** von
+Wand/Stuetze/Traeger/Fenster/... - `ifcopenshell.file.by_type()` liefert
+per Default (`include_subtypes=True`) alle Unterklassen mit, wodurch
+`by_type("IfcBuildingElement")` an WDC3 5930 statt 32 tatsaechlicher
+Instanzen zurueckgab und jedes bereits verarbeitete Bauteil ein
+zweites Mal (redundant) gepruefte. Fix: `include_subtypes=False`
+durchgaengig fuer alle `RELEVANT_IFC_CLASSES`-Eintraege - da jede
+relevante Klasse ohnehin einzeln aufgefuehrt ist (inkl.
+`IfcWallStandardCase` separat von `IfcWall`), geht dadurch keine
+Abdeckung verloren (verifiziert: identische Bauteilzahl vorher/nachher
+an beiden Test-IFCs).
+
+Ausserdem eine grobe Fortschrittsanzeige ergaenzt (alle ~5% der
+Kandidaten eine Zeile), da das Laden bei grossen, vollstaendig
+erfassten Projekten mehrere Minuten dauern kann.
+
+**Verifiziert (Laufzeit + Vollstaendigkeit):**
+- Demo-IFC: 318 Kandidaten (vorher 683 ohne den include_subtypes-Fix),
+  weiterhin 268 Bauteile, ~5s Ladezeit.
+- WDC3 (grosses reales Projekt): 5930 Kandidaten, 5885 geladene
+  Bauteile (`IfcWallStandardCase` 1857, `IfcCovering` 1760, `IfcColumn`
+  483, `IfcBeam` 382, `IfcDoor` 283, `IfcWindow` 273, `IfcSlab` 270,
+  `IfcBuildingElementPart` 252, `IfcRailing` 200,
+  `IfcBuildingElementProxy` 85, `IfcBuildingElement` 32, `IfcStair` 7,
+  `IfcRoof` 1), Ladezeit **~9,4 Minuten** - deutlich laenger als vorher
+  (~1:40 min mit nur 6 Klassen), aber ein einmaliger, verlaesslich
+  durchlaufender Aufwand pro Generierungslauf (weit innerhalb des
+  `SUBPROCESS_TIMEOUT_SECONDS`-Limits von 3600s).
+
 ## Etappenplan
 
 - [x] **Etappe 0**: API-Spike (Ergebnisse oben)
