@@ -12,7 +12,7 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from generator_tool.core.ifc_reader import IfcBauteilGeometrie
-from generator_tool.core.schnitt_berechnung import berechne_schnitt
+from generator_tool.core.schnitt_berechnung import _simplify_collinear, berechne_schnitt
 from ifc_schnitt_importer.shared.schnitt_format import SchnittEbene
 
 
@@ -94,6 +94,52 @@ def test_ebene_ausserhalb_des_wuerfels_liefert_nichts():
     _assert(len(linien) == 0, "keine Linie erwartet, Ebene liegt ausserhalb des Wuerfels")
 
 
+def test_simplify_collinear_stuerzt_bei_entarteter_flaeche_nicht_ab():
+    """Regressionstest fuer einen live aufgetretenen IndexError:
+
+    Bei einer sehr duennen/entarteten geschlossenen Kette konnte ein
+    einzelner Vereinfachungs-Durchgang gleichzeitig so viele Punkte als
+    "kollinear" werten, dass die Kette unter die fuer ein geschlossenes
+    Polygon noetige Mindestpunktzahl (3) fiel - hier extra: auf nur 2.
+    """
+
+    # Ein sehr duenner "Schmetterlings"-Ring: P1 und P3 liegen beide
+    # (innerhalb der Toleranz) auf der Linie P0-P2, wuerden also in
+    # einem einzigen Durchgang BEIDE als kollinear entfernt und liessen
+    # nur noch P0/P2 uebrig (2 Punkte) - zu wenig fuer ein geschlossenes
+    # Polygon.
+    p0 = (0.0, 0.0, 0.0)
+    p1 = (10.0, 0.0005, 0.0)
+    p2 = (20.0, 0.0, 0.0)
+    p3 = (10.0, -0.0005, 0.0)
+    ring = [p0, p1, p2, p3, p0]  # geschlossen: letzter == erster
+
+    result = _simplify_collinear(ring, is_closed=True)
+
+    _assert(len(result) >= 3, f"Ergebnis muss mindestens 3 Punkte behalten (geschlossenes Polygon), erhalten {len(result)}")
+    print(f"(kein Absturz, {len(result)} Punkte im Ergebnis)")
+
+
+def test_berechne_schnitt_ueberspringt_problematisches_bauteil_ohne_abzubrechen():
+    """Ein Bauteil, dessen Schnittgeometrie eine Ausnahme ausloest, darf
+    den gesamten Schnitt nicht abbrechen - andere Bauteile muessen
+    trotzdem verarbeitet werden."""
+
+    size = 1000.0
+    gutes_bauteil = IfcBauteilGeometrie(ifc_guid="GUT", ifc_type="IfcWall", dreiecke=_wuerfel_dreiecke(size))
+
+    # Bewusst kaputtes "Bauteil" (kein echtes Dreiecksnetz) - loest beim
+    # Verarbeiten eine Ausnahme aus und muss uebersprungen werden, ohne
+    # die Verarbeitung von gutes_bauteil zu verhindern.
+    kaputtes_bauteil = IfcBauteilGeometrie(ifc_guid="KAPUTT", ifc_type="IfcWall", dreiecke=[("nicht", "valide")])
+
+    ebene = SchnittEbene(origin=[0, 0, size / 2], normal=[0, 0, 1])
+    flaechen, linien = berechne_schnitt(ebene, [kaputtes_bauteil, gutes_bauteil])
+
+    _assert(len(flaechen) == 1, f"das gute Bauteil muss trotz des kaputten trotzdem verarbeitet werden, erhalten {len(flaechen)} Flaechen")
+    _assert(flaechen[0].ifc_guid == "GUT", "die verarbeitete Flaeche muss vom guten Bauteil stammen")
+
+
 def _polygon_area_xy(vertices):
     """Shoelace-Formel (funktioniert hier, da der Testring in der XY-Ebene liegt)."""
 
@@ -111,6 +157,8 @@ def main():
         test_horizontaler_schnitt_durch_wuerfel_liefert_ein_quadrat,
         test_diagonaler_schnitt_liefert_geschlossenes_sechseck,
         test_ebene_ausserhalb_des_wuerfels_liefert_nichts,
+        test_simplify_collinear_stuerzt_bei_entarteter_flaeche_nicht_ab,
+        test_berechne_schnitt_ueberspringt_problematisches_bauteil_ohne_abzubrechen,
     ]
     for test in tests:
         print(f"--- {test.__name__} ---")

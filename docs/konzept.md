@@ -288,6 +288,35 @@ erfassten Projekten mehrere Minuten dauern kann.
   durchlaufender Aufwand pro Generierungslauf (weit innerhalb des
   `SUBPROCESS_TIMEOUT_SECONDS`-Limits von 3600s).
 
+**10. Durchlauf - Absturz bei duenner/entarteter Flaeche:** nach der
+Erweiterung um Fenster/Covering/etc. brach die Generierung bei WDC3
+komplett ab: `IndexError: list index out of range` in
+`_simplify_collinear`. Ursache: der `len(pts) > min_points`-Check griff
+nur ZWISCHEN Vereinfachungs-Durchgaengen, nicht INNERHALB eines
+Durchgangs - bei einer sehr duennen/entarteten Flaeche (vermutlich eine
+duenne Covering-Schicht, die die Schnittebene in einem flachen Winkel
+streift) wurden in einem einzigen Durchgang mehr Punkte gleichzeitig
+als "kollinear" erkannt, als danach fuer ein geschlossenes Polygon
+uebrig bleiben durften - die Kette fiel auf 0-1 Punkte zusammen, und
+das anschliessende `pts[0]` auf der leeren Liste crashte.
+
+Zwei Fixes:
+1. `_simplify_collinear`: ein Durchgang, der unter `min_points` fallen
+   wuerde (oder nichts mehr veraendert), wird verworfen und die
+   Vereinfachung fuer diese Kette abgebrochen, statt zu entarten.
+2. `berechne_schnitt`: die Verarbeitung jedes einzelnen Bauteils laeuft
+   jetzt in einem eigenen try/except (`_bauteil_schnitt`-Hilfsfunktion)
+   - ein einzelnes problematisches Bauteil wird uebersprungen (mit
+   Konsolen-Warnung) statt den gesamten Schnitt-Lauf abzubrechen und
+   alle bereits berechneten/noch zu berechnenden Schnitte zu verlieren.
+
+Zwei neue Regressionstests in
+`generator_tool/tests/test_schnitt_berechnung.py`: ein direkt
+konstruierter "Schmetterlings"-Ring, der denselben Kollaps-auf-2-Punkte
+provoziert (`_simplify_collinear` direkt getestet), sowie ein Test, der
+ein bewusst kaputtes Bauteil neben einem guten verarbeitet und prueft,
+dass das gute Bauteil trotzdem im Ergebnis landet.
+
 ## Etappenplan
 
 - [x] **Etappe 0**: API-Spike (Ergebnisse oben)

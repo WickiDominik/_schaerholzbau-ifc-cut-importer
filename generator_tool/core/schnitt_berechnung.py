@@ -89,10 +89,16 @@ def _simplify_collinear(points: List[Point3], is_closed: bool, tolerance: float 
     if ring_duplicate:
         pts = pts[:-1]
 
+    # Wichtig: der `len(pts) > min_points`-Check greift nur ZWISCHEN
+    # Durchgaengen. Bei sehr duennen/entarteten Flaechen (z.B. eine
+    # duenne Covering-Schicht, die die Ebene fast streift) kann ein
+    # EINZELNER Durchgang mehr Punkte als noetig als "kollinear" werten
+    # und die Kette auf 0-1 Punkte zusammenfallen lassen - live als
+    # IndexError beim Wiederanhaengen des Ringpunkts aufgetreten. Deshalb
+    # hier: einen Durchgang, der unter `min_points` fallen wuerde (oder
+    # nichts mehr veraendert), verwerfen und abbrechen statt zu entarten.
     min_points = 3 if is_closed else 2
-    changed = True
-    while changed and len(pts) > min_points:
-        changed = False
+    while len(pts) > min_points:
         n = len(pts)
         new_pts = []
         for i in range(n):
@@ -102,9 +108,11 @@ def _simplify_collinear(points: List[Point3], is_closed: bool, tolerance: float 
             prev_pt = pts[(i - 1) % n]
             next_pt = pts[(i + 1) % n]
             if _perpendicular_distance(pts[i], prev_pt, next_pt) < tolerance:
-                changed = True
                 continue
             new_pts.append(pts[i])
+
+        if len(new_pts) < min_points or len(new_pts) == len(pts):
+            break
         pts = new_pts
 
     if ring_duplicate:
@@ -269,46 +277,70 @@ def berechne_schnitt(
     linien: List[SchnittLinie] = []
 
     for bauteil in bauteile:
-        segments = []
-        for triangle in bauteil.dreiecke:
-            segment = _triangle_plane_intersection(triangle, origin, normal)
-            if segment is not None:
-                segments.append(segment)
+        try:
+            segments = []
+            for triangle in bauteil.dreiecke:
+                segment = _triangle_plane_intersection(triangle, origin, normal)
+                if segment is not None:
+                    segments.append(segment)
 
-        if not segments:
-            continue
-
-        for raw_points, is_closed in _chain_segments(segments):
-            points = _simplify_collinear(raw_points, is_closed)
-            if len(points) < 2:
+            if not segments:
                 continue
 
-            if is_closed:
-                # Geschlossene Kette -> eine Flaeche. Die zugehoerige
-                # Kontur-Linie wird beim Import direkt aus den
-                # Flaechen-Eckpunkten als EIN zusammenhaengendes Element
-                # erzeugt (siehe schnitt_importer/service.py) statt hier
-                # als N einzelne Kantensegmente dupliziert zu werden.
-                # Letzter Punkt ist die Wiederholung des ersten (Ring) -> weglassen.
-                flaechen.append(
-                    SchnittFlaeche(
-                        vertices=[list(p) for p in points[:-1]],
+            bauteil_flaechen, bauteil_linien = _bauteil_schnitt(bauteil, segments)
+            flaechen.extend(bauteil_flaechen)
+            linien.extend(bauteil_linien)
+        except Exception as e:
+            # Ein einzelnes problematisches Bauteil (z.B. eine sehr duenne/
+            # entartete Flaeche, die die Ebene fast streift) darf nicht den
+            # gesamten Schnitt abbrechen - live als IndexError in
+            # _simplify_collinear aufgetreten. Bauteil ueberspringen,
+            # Rest des Schnitts weiterrechnen.
+            print(f"[schnitt_berechnung] {bauteil.ifc_type} {bauteil.ifc_guid} uebersprungen: {e}")
+            continue
+
+    return flaechen, linien
+
+
+def _bauteil_schnitt(
+    bauteil: IfcBauteilGeometrie, segments: List[Tuple[Point3, Point3]]
+) -> Tuple[List[SchnittFlaeche], List[SchnittLinie]]:
+    """Verkettet die Schnittsegmente EINES Bauteils zu Flaechen/Linien."""
+
+    flaechen: List[SchnittFlaeche] = []
+    linien: List[SchnittLinie] = []
+
+    for raw_points, is_closed in _chain_segments(segments):
+        points = _simplify_collinear(raw_points, is_closed)
+        if len(points) < 2:
+            continue
+
+        if is_closed:
+            # Geschlossene Kette -> eine Flaeche. Die zugehoerige
+            # Kontur-Linie wird beim Import direkt aus den
+            # Flaechen-Eckpunkten als EIN zusammenhaengendes Element
+            # erzeugt (siehe schnitt_importer/service.py) statt hier
+            # als N einzelne Kantensegmente dupliziert zu werden.
+            # Letzter Punkt ist die Wiederholung des ersten (Ring) -> weglassen.
+            flaechen.append(
+                SchnittFlaeche(
+                    vertices=[list(p) for p in points[:-1]],
+                    ifc_element_type=bauteil.ifc_type,
+                    ifc_guid=bauteil.ifc_guid,
+                )
+            )
+        else:
+            # Offene (nicht geschlossene) Kette - seltener Sonderfall
+            # (z.B. unvollstaendige Triangulierung). Kein Flaechen-
+            # Aequivalent, daher weiterhin als einzelne Segmente.
+            for i in range(len(points) - 1):
+                linien.append(
+                    SchnittLinie(
+                        start=list(points[i]),
+                        end=list(points[i + 1]),
                         ifc_element_type=bauteil.ifc_type,
                         ifc_guid=bauteil.ifc_guid,
                     )
                 )
-            else:
-                # Offene (nicht geschlossene) Kette - seltener Sonderfall
-                # (z.B. unvollstaendige Triangulierung). Kein Flaechen-
-                # Aequivalent, daher weiterhin als einzelne Segmente.
-                for i in range(len(points) - 1):
-                    linien.append(
-                        SchnittLinie(
-                            start=list(points[i]),
-                            end=list(points[i + 1]),
-                            ifc_element_type=bauteil.ifc_type,
-                            ifc_guid=bauteil.ifc_guid,
-                        )
-                    )
 
     return flaechen, linien
