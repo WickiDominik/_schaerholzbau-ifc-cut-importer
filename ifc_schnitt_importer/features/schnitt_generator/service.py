@@ -14,6 +14,12 @@ Schritte ab:
 Die eigentliche IFC-Geometrie-/Schnittberechnung passiert weiterhin
 NICHT in Cadwork - siehe docs/konzept.md, Abschnitt "Warum die
 Schnittberechnung ausserhalb von Cadwork passiert".
+
+Die Subprozess-Ausgabe wird zeilenweise gestreamt (nicht erst am Ende
+komplett zurueckgegeben) - jede Zeile geht per print() an die Cadwork-
+Konsole UND an einen optionalen `line_callback` fuer Fortschritts-
+anzeigen im UI (siehe app/main_window.py). Das UI selbst zeigt nur eine
+kurze Zusammenfassung, keinen Konsolen-Mitschnitt mehr.
 """
 
 from __future__ import annotations
@@ -21,8 +27,9 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
 from dataclasses import asdict, dataclass, field
-from typing import List
+from typing import Callable, List, Optional
 
 from ifc_schnitt_importer.app.bootstrap import project_root
 from ifc_schnitt_importer.app.config import GeneratorToolConfig, PathConfig, SchnittDefinitionConfig
@@ -35,6 +42,8 @@ from ifc_schnitt_importer.shared.schnitt_definition import (
     SchnittDefinitionFehler,
 )
 
+LineCallback = Optional[Callable[[str], None]]
+
 
 class GeneratorToolNichtEingerichtetError(RuntimeError):
     """Die venv des externen generator_tool wurde noch nicht angelegt."""
@@ -46,7 +55,6 @@ class SchnitteGenerierenErgebnis:
     definitionen_datei: str
     ifc_datei: str
     subprocess_erfolgreich: bool
-    subprocess_ausgabe: str
     erzeugte_dateien: List[str] = field(default_factory=list)
 
 
@@ -132,9 +140,29 @@ class SchnittGeneratorService:
     def generator_tool_verfuegbar(self) -> bool:
         return os.path.isfile(self._venv_python_path())
 
-    def generate_schnitte(self, ifc_datei: str) -> SchnitteGenerierenErgebnis:
-        """Exportiert frische Schnitt-Definitionen und laesst das externe
-        generator_tool daraus + der gewaehlten IFC die Schnitte berechnen.
+    def generate_schnitte(
+        self,
+        ifc_datei: str,
+        definitionen_export: SchnittDefinitionExport,
+        definitionen_datei: str,
+        line_callback: LineCallback = None,
+    ) -> SchnitteGenerierenErgebnis:
+        """Laesst das externe generator_tool aus der IFC + den (bereits
+        exportierten) Schnitt-Definitionen die Schnitte berechnen.
+
+        `definitionen_export`/`definitionen_datei` kommen von einem
+        vorherigen `export_schnitt_definitionen()`-Aufruf auf dem
+        Cadwork-Hauptthread (nutzt die Cadwork-API). Diese Methode selbst
+        ruft KEINE Cadwork-API mehr auf - nur noch Subprozess/Dateisystem
+        - und kann daher vom Aufrufer (siehe app/main_window.py) gefahrlos
+        in einem Hintergrund-Thread laufen, damit Cadworks UI waehrend
+        der (bei grossen Projekten mehrminuetigen) Verarbeitung nicht
+        einfriert.
+
+        `line_callback` wird - falls angegeben - fuer JEDE Ausgabezeile
+        des Subprozesses aufgerufen (zusaetzlich zum print() an die
+        Cadwork-Konsole), z.B. um eine Fortschrittsanzeige im UI zu
+        fuettern.
         """
 
         if not os.path.isfile(ifc_datei):
@@ -151,9 +179,6 @@ class SchnittGeneratorService:
                 "  .venv\\Scripts\\pip install -r requirements.txt"
             )
 
-        self.ensure_attribute_label()
-        definitionen_export, definitionen_datei = self.export_schnitt_definitionen()
-
         output_dir = os.path.dirname(definitionen_datei)
 
         cli_script = self._cli_script_path()
@@ -168,22 +193,7 @@ class SchnittGeneratorService:
         env = dict(os.environ)
         env["PYTHONIOENCODING"] = "utf-8"
 
-        try:
-            completed = subprocess.run(
-                args,
-                cwd=project_root(),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                env=env,
-                timeout=GeneratorToolConfig.SUBPROCESS_TIMEOUT_SECONDS,
-            )
-            ausgabe = (completed.stdout or "") + (("\n" + completed.stderr) if completed.stderr else "")
-            erfolgreich = completed.returncode == 0
-        except subprocess.TimeoutExpired as e:
-            ausgabe = f"Zeitueberschreitung nach {GeneratorToolConfig.SUBPROCESS_TIMEOUT_SECONDS}s: {e}"
-            erfolgreich = False
+        erfolgreich = self._run_streaming(args, env, line_callback)
 
         erzeugte_dateien = []
         if erfolgreich:
@@ -198,6 +208,51 @@ class SchnittGeneratorService:
             definitionen_datei=definitionen_datei,
             ifc_datei=ifc_datei,
             subprocess_erfolgreich=erfolgreich,
-            subprocess_ausgabe=ausgabe,
             erzeugte_dateien=erzeugte_dateien,
         )
+
+    def _run_streaming(self, args: List[str], env: dict, line_callback: LineCallback) -> bool:
+        """Subprozess starten, Ausgabe zeilenweise lesen+weiterreichen,
+        hartes Timeout ueber einen Watchdog-Timer statt subprocess.run's
+        eingebautem Timeout (das die Ausgabe erst am Ende liefern wuerde)."""
+
+        process = subprocess.Popen(
+            args,
+            cwd=project_root(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            bufsize=1,
+        )
+
+        timed_out = {"value": False}
+
+        def _kill_on_timeout():
+            timed_out["value"] = True
+            process.kill()
+
+        watchdog = threading.Timer(GeneratorToolConfig.SUBPROCESS_TIMEOUT_SECONDS, _kill_on_timeout)
+        watchdog.start()
+
+        try:
+            assert process.stdout is not None
+            for line in process.stdout:
+                line = line.rstrip("\n")
+                print(line)
+                if line_callback is not None:
+                    try:
+                        line_callback(line)
+                    except Exception as e:
+                        print(f"[schnitt_generator] Fehler im Fortschritts-Callback (ignoriert): {e}")
+            process.wait()
+        finally:
+            watchdog.cancel()
+
+        if timed_out["value"]:
+            print(f"[schnitt_generator] Zeitueberschreitung nach {GeneratorToolConfig.SUBPROCESS_TIMEOUT_SECONDS}s - Prozess abgebrochen.")
+            return False
+
+        return process.returncode == 0

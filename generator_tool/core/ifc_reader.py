@@ -141,7 +141,7 @@ def lade_bauteile(ifc_file_path: str, ifc_classes: Tuple[str, ...] = RELEVANT_IF
     # sonst wie ein Haenger.
     total_candidates = sum(len(ifc_file.by_type(c, include_subtypes=False)) for c in ifc_classes)
     processed = 0
-    progress_step = max(500, total_candidates // 20 or 1)
+    progress_step = max(100, total_candidates // 20 or 1)
     print(f"[ifc_reader] {total_candidates} Kandidaten-Elemente in {len(ifc_classes)} Klassen zu pruefen ...")
 
     for ifc_class in ifc_classes:

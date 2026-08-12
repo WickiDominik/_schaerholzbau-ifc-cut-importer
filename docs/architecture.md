@@ -24,7 +24,8 @@ _schaerholzbau-ifc-schnitt-importer/
 |  |  |- bootstrap.py       sys.path / Dependency-Bootstrap
 |  |  |- config.py          AppConfig, PathConfig, SchnittDefinitionConfig, ReferenceGeometryConfig
 |  |  |- main.py            cadwork_menu() Einstiegspunkt
-|  |  `- menu_controller.py Cadwork "simple menu" Dispatch
+|  |  |- menu_controller.py Cadwork "simple menu" Dispatch (ein Menuepunkt)
+|  |  `- main_window.py     EIN Fenster fuer Generieren + Importieren (Fortschrittsbalken, Threading)
 |  |- cadwork_api/          Duenne Wrapper um die Cadwork-Controller-Module
 |  |  |- bim.py             bim_controller
 |  |  |- elements.py        element_controller
@@ -33,8 +34,10 @@ _schaerholzbau-ifc-schnitt-importer/
 |  |  |- project.py         utility_controller
 |  |  `- visualization.py   visualization_controller
 |  |- features/
-|  |  |- schnitt_generator/ Benutzerattribute scannen -> schnitt_definitionen.json (window/service)
-|  |  `- schnitt_importer/  .ifccut.json einlesen -> Flaechen/Linien im 3D (window/service)
+|  |  |- schnitt_generator/ service.py: Benutzerattribute scannen -> schnitt_definitionen.json,
+|  |  |                     generator_tool per Subprozess anstossen (kein window.py mehr - UI in app/main_window.py)
+|  |  `- schnitt_importer/  service.py: .ifccut.json einlesen -> Flaechen/Linien im 3D, join_elements
+|  |                        (kein window.py mehr - UI in app/main_window.py)
 |  |- shared/                Von Cadwork-Plugin UND generator_tool/ gemeinsam genutzt (reines Python)
 |  |  |- schnitt_definition.py  Benutzerattribut-Textformat (Stufe 1 -> Stufe 2)
 |  |  |- schnitt_format.py      Schnitt-Ergebnis-JSON (Stufe 2 -> Stufe 3)

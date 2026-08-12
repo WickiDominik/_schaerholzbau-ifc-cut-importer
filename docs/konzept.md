@@ -380,8 +380,14 @@ create_surface-Aufrufe, keine Kantenlinien mehr, nur echte Restlinien).
       End-to-end mit gefaelschten Cadwork-Modulen + echtem
       Subprozess-Aufruf verifiziert (Attribut -> Export ->
       generator_tool-venv -> .ifccut.json, 26 Flaechen/108 Linien).
-- [ ] **Etappe 5 (Teil 2)**: weiterer UI/UX-Feinschliff (Fortschrittsanzeige
-      waehrend der Generierung, Vorschau vor dem Import)
+- [x] **Etappe 5 (Teil 2)**: UI/UX-Feinschliff auf Anwenderwunsch:
+      Generator und Importer in EINEM Fenster (`app/main_window.py`,
+      ersetzt die getrennten `features/schnitt_generator/window.py` +
+      `features/schnitt_importer/window.py`, die entfernt wurden),
+      echter Fortschrittsbalken statt Text-Dump, Konsolen-Details per
+      `print()` an die Cadwork-Konsole statt ins UI (UI zeigt nur eine
+      kurze Zusammenfassung). Details (Threading-Modell etc.) im
+      Etappe-6-Log unten.
 - [ ] **Etappe 6**: Cadwork-Livetest der gesamten Kette, danach Test mit
       echten Projektdaten, Rollout
 
@@ -480,3 +486,56 @@ inkl. Schlusskante werden erzeugt und teilen sich Endpunkte, nicht ein
 einzelnes Cadwork-Element.
 Das erklaert vermutlich einen Teil der zuvor beobachteten
 "Dreiecke"/fehlerhaften Flaechen mit.
+
+**6. Durchlauf - Feature-Wuensche nach erfolgreichem Grosstest (WDC3
+lieferte deutlich mehr Bauteile):** drei Verbesserungen umgesetzt:
+
+1. **`join_elements`:** alle Flaechen eines Schnitts werden nach dem
+   Erzeugen ueber `element_controller.join_elements(flaeche_ids)` zu
+   einem zusammenhaengenden Element verbunden (nur bei >=2 Flaechen).
+   `SchnittImportErgebnis` hat dafuer ein neues Feld
+   `flaechen_verbunden: bool`.
+2. **Ein gemeinsames UI statt zwei Fenstern:** neues
+   `app/main_window.py` deckt Generieren UND Importieren in einem
+   Fenster ab (Abschnitt 1: IFC waehlen + generieren, Abschnitt 2:
+   Zwischendateien waehlen + importieren). Die alten getrennten Fenster
+   `features/schnitt_generator/window.py` und
+   `features/schnitt_importer/window.py` wurden entfernt; die
+   zugehoerigen Services (`SchnittGeneratorService`,
+   `SchnittImporterService`) bleiben unveraendert bestehen und werden
+   vom neuen Fenster genutzt. `menu_controller.py`/`UITextConfig` auf
+   einen einzigen Menuepunkt reduziert.
+3. **Echter Fortschrittsbalken statt Konsolen-Dump im UI:** die Cadwork-
+   API (`ec.*`/`ac.*`/`vc.*`) ist nur vom Hauptthread aus sicher
+   aufrufbar (Cadwork ist single-threaded), der externe
+   `generator_tool`-Subprozess dagegen beruehrt keine Cadwork-API.
+   Deshalb:
+   - `SchnittGeneratorService.generate_schnitte(...)` nimmt jetzt
+     `definitionen_export`/`definitionen_datei` als Parameter (statt sie
+     selbst zu ermitteln) und einen `line_callback` - der Cadwork-API-
+     Teil (`export_schnitt_definitionen`) laeuft weiterhin auf dem
+     Hauptthread, der reine Subprozess-Teil (`_run_streaming`, per
+     `subprocess.Popen` zeilenweise gelesen statt `subprocess.run` mit
+     `capture_output`) kann dadurch gefahrlos in einem Hintergrund-
+     Thread laufen (`threading.Thread` im UI), waehrend die
+     Fortschrittszeilen ueber eine `queue.Queue` + `root.after`-Polling
+     zurueck ins UI kommen. Timeout ueber einen `threading.Timer`-
+     Watchdog statt `subprocess.run`s eingebautem Timeout (das die
+     Ausgabe sonst erst am Ende geliefert haette).
+   - `SchnittImporterService.import_schnitt(...)` nimmt einen optionalen
+     `progress_callback(current, total, message)`, alle 20 verarbeitete
+     Elemente aufgerufen (Cadwork-API, daher synchron auf dem
+     Hauptthread mit periodischen `update_idletasks()`-Aufrufen -
+     gleiches Muster wie in `shb_toolcenter`).
+   - Ausfuehrliche Meldungen (Fehler je Flaeche/Linie, jede Subprozess-
+     Zeile) gehen nur noch per `print()` an die Cadwork-Konsole; das UI
+     zeigt ausschliesslich eine kurze Zusammenfassung
+     (`_set_summary(...)`), auf Anwenderwunsch.
+   - `ifc_reader.py`: Fortschritts-Schrittweite von mind. 500 auf
+     mind. 100 gesenkt, sonst blieben bei kleineren IFC-Dateien
+     (< 500 Kandidaten) gar keine Zwischen-Fortschrittszeilen aus (live
+     im Streaming-Test mit der Demo-IFC bemerkt).
+
+Mock-Dry-Runs fuer beide Services aktualisiert und gruen (inkl. echtem
+Subprozess-Aufruf mit Streaming-Callback gegen die Demo-IFC, sowie
+`join_elements`/`progress_callback` im Importer-Mock).

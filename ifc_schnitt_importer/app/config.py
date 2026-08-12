@@ -126,13 +126,13 @@ class ReferenceGeometryConfig:
 class UITextConfig:
     """UI text and menu configuration."""
 
-    MENU_GENERATOR = "IFC Schnitt Generator"
-    MENU_IMPORTER = "IFC Schnitt Importer"
+    # Generator und Importer laufen in einem gemeinsamen Fenster
+    # (app/main_window.py) - ein Menuepunkt genuegt.
+    MENU_MAIN = "IFC Schnitt Generator/Importer"
     MENU_CLOSE = "Schliessen"
 
     MENU_OPTIONS = (
-        MENU_GENERATOR,
-        MENU_IMPORTER,
+        MENU_MAIN,
         "",
         MENU_CLOSE,
     )
