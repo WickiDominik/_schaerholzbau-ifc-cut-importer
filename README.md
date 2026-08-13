@@ -1,6 +1,6 @@
 # Holzbau IFC Schnitt Importer
 
-Eigenständiges Cadwork-Plugin für die Schärholzbau Holzbau-GU-Planung:
+Eigenständiges Cadwork-Plugin für die schaerholzbau Holzbau-GU-Planung:
 generiert Grundriss- und Gebäudeschnitte aus einer vom Architekten (GU)
 gelieferten IFC-Datei und importiert die Ergebnisse lagerichtig als
 Referenz-Flächen und -Linien ins 3D-Modell.
