@@ -327,8 +327,19 @@ def test_generate_schnitte_ohne_cadwork_api_im_thread_und_nur_neue_dateien():
         assert any("Kandidaten-Elemente" in z for z in zeilen)
 
 
+def test_importierte_schnitt_namen_mit_legacy_nur_bei_import_kommentar():
+    _reset()
+    MODELL.add({MARKER: "Schnitt A"}, TAG)
+    MODELL.add({MARKER: "Schnitt A"}, TAG)
+    MODELL.add({LEGACY: "Alt importiert"}, TAG)
+    MODELL.add({LEGACY: "Name=Def;Typ=horizontal;Ursprung=0,0,0;Richtung=0,0,1"}, "")  # Definition, kein Import
+    MODELL.add({MARKER: "   "}, TAG)
+
+    assert SchnittImporterService().importierte_schnitt_namen() == {"Schnitt A", "Alt importiert"}
+
+
 def main():
-    tests = [(name, fn) for name, fn in globals().items() if name.startswith("test_") and callable(fn)]
+    tests =[(name, fn) for name, fn in globals().items() if name.startswith("test_") and callable(fn)]
     for name, fn in tests:
         fn()
         print(f"OK: {name}")

@@ -33,7 +33,7 @@ from __future__ import annotations
 import glob
 import os
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Set
 
 from ifc_schnitt_importer.app.config import PathConfig, ReferenceGeometryConfig
 from ifc_schnitt_importer.cadwork_api import attributes as ac
@@ -103,6 +103,29 @@ class SchnittImporterService:
             )
         except Exception as e:
             print(f"[schnitt_importer] Konnte Attribut-Beschriftung nicht setzen: {e}")
+
+    def importierte_schnitt_namen(self) -> Set[str]:
+        """Namen aller Schnitte, die im 3D bereits importiert sind (Cadwork-API, nur Hauptthread).
+
+        Fuer die Status-Spalte im Fenster. Ein Lesezugriff je Element auf
+        den Marker-Slot; Legacy-Slots zaehlen wie in _find_previous_import
+        nur zusammen mit dem Import-Kommentar.
+        """
+
+        namen: Set[str] = set()
+        for element_id in ec.get_all_identifiable_element_ids():
+            for number in self._marker_numbers():
+                try:
+                    wert = ac.get_user_attribute(element_id, number)
+                except Exception:
+                    continue
+                if not wert or not wert.strip():
+                    continue
+                if number != ReferenceGeometryConfig.IMPORT_MARKER_ATTRIBUTE_NUMBER and not self._ist_import_element(element_id):
+                    continue
+                namen.add(wert.strip())
+                break
+        return namen
 
     def _marker_numbers(self) -> List[int]:
         return [ReferenceGeometryConfig.IMPORT_MARKER_ATTRIBUTE_NUMBER, *ReferenceGeometryConfig.LEGACY_IMPORT_MARKER_ATTRIBUTE_NUMBERS]
