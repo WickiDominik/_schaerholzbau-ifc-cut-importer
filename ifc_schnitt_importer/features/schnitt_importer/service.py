@@ -12,15 +12,16 @@ und erzeugt:
 - KEINE eigene Kontur-Linie je Flaeche mehr: eine gefuellte Flaeche
   zeigt ihren Umriss in Cadwork bereits selbst, eine zusaetzliche
   Linien-Umrandung waere redundant (auf Anwenderwunsch entfernt).
-- je restlichem offenem Liniensegment (Sonderfall, siehe
-  schnitt_berechnung.py - eine Kette OHNE zugehoerige Flaeche) weiterhin
-  einzelne create_line_points-Elemente.
+- je Liniensegment einzelne create_line_points-Elemente: Lochkonturen
+  (innere Ringe, z.B. Aussparungen, Hohlprofile) und offene Ketten,
+  siehe schnitt_berechnung.py.
 
 Alle erzeugten Elemente bekommen BUG (Bauuntergruppe) =
 ReferenceGeometryConfig.BAUUNTERGRUPPE ("Grundrisse/Schnitte", gleiche
 Konvention wie shb_toolcenter.cut_handling) und BG (Baugruppe) = der
 Schnittname. Ein erneuter Import desselben Schnitts ersetzt die zuvor
-importierte Geometrie (ueber ein Benutzerattribut wiedergefunden).
+importierte Geometrie (ueber ein Benutzerattribut wiedergefunden), aber
+erst nachdem die neue Geometrie erzeugt wurde.
 
 Ausfuehrliche Meldungen (Fehler je Flaeche/Linie, Fortschritt) gehen NUR
 noch per print() an die Cadwork-Konsole - das UI zeigt lediglich eine
@@ -103,20 +104,78 @@ class SchnittImporterService:
         except Exception as e:
             print(f"[schnitt_importer] Konnte Attribut-Beschriftung nicht setzen: {e}")
 
-    def _find_previous_import(self, schnitt_name: str) -> List[int]:
-        """Elemente eines frueheren Imports desselben Schnitts finden."""
+    def _marker_numbers(self) -> List[int]:
+        return [ReferenceGeometryConfig.IMPORT_MARKER_ATTRIBUTE_NUMBER, *ReferenceGeometryConfig.LEGACY_IMPORT_MARKER_ATTRIBUTE_NUMBERS]
 
-        found = []
-        for element_id in ec.get_all_identifiable_element_ids():
-            try:
-                marker = ac.get_user_attribute(element_id, ReferenceGeometryConfig.IMPORT_MARKER_ATTRIBUTE_NUMBER)
-            except Exception:
-                continue
-            if marker == schnitt_name:
+    def _find_previous_import(self, schnitt_name: str) -> List[int]:
+        """Elemente eines frueheren Imports desselben Schnitts finden.
+
+        Prueft die aktuelle Marker-Nummer UND fruehere Nummern (siehe
+        ReferenceGeometryConfig.LEGACY_IMPORT_MARKER_ATTRIBUTE_NUMBERS),
+        damit Importe aus aelteren Plugin-Versionen ebenfalls ersetzt
+        werden. Ein Treffer im Legacy-Slot zaehlt nur zusammen mit dem
+        Import-Kommentar - dort (21) koennten sonst auch Schnitt-
+        Definitionen stehen.
+        """
+
+        all_ids = ec.get_all_identifiable_element_ids()
+        found: List[int] = []
+        seen = set()
+        for number in self._marker_numbers():
+            for element_id in self._elements_with_user_attribute(all_ids, number, schnitt_name):
+                if element_id in seen:
+                    continue
+                if number != ReferenceGeometryConfig.IMPORT_MARKER_ATTRIBUTE_NUMBER and not self._ist_import_element(element_id):
+                    continue
+                seen.add(element_id)
                 found.append(element_id)
         return found
 
+    @staticmethod
+    def _ist_import_element(element_id: int) -> bool:
+        try:
+            return ac.get_comment(element_id) == ReferenceGeometryConfig.COMMENT_TAG
+        except Exception:
+            return False
+
+    @staticmethod
+    def _elements_with_user_attribute(all_ids, number: int, value: str) -> List[int]:
+        """Elemente mit Benutzerattribut `number` == `value`.
+
+        Bevorzugt ueber ec.filter_elements + cadwork.element_filter (ein
+        API-Aufruf statt einem je Element); faellt auf die Einzelabfrage
+        zurueck, falls der Filter in der installierten Cadwork-Version
+        fehlt. Das Ergebnis wird in beiden Faellen exakt nachgeprueft,
+        weil nicht dokumentiert ist, ob der Filter exakt oder per
+        Teilstring vergleicht.
+        """
+
+        candidates = all_ids
+        try:
+            element_filter = cw.element_filter()
+            element_filter.set_user_attribute(number, value)
+            candidates = ec.filter_elements(all_ids, element_filter)
+        except Exception as e:
+            print(f"[schnitt_importer] element_filter nicht verfuegbar, pruefe Elemente einzeln: {e}")
+
+        result = []
+        for element_id in candidates:
+            try:
+                if ac.get_user_attribute(element_id, number) == value:
+                    result.append(element_id)
+            except Exception:
+                continue
+        return result
+
     def import_schnitt(self, ergebnis: SchnittErgebnis, progress_callback: ProgressCallback = None) -> SchnittImportErgebnis:
+        """Erzeugt die Referenzgeometrie eines Schnitts.
+
+        Reihenfolge bewusst: (1) frueheren Import nur SUCHEN, (2) neue
+        Elemente erzeugen und sofort markieren, (3) erst dann den alten
+        Import loeschen. Scheitert die Erzeugung komplett, bleibt der
+        alte Import erhalten, statt dass das Modell ohne Schnitt dasteht.
+        """
+
         def report(current: int, total: int, message: str) -> None:
             print(f"[schnitt_importer] {message} ({current}/{total})")
             if progress_callback is not None:
@@ -126,12 +185,14 @@ class SchnittImporterService:
 
         report(0, 1, f"Suche vorherigen Import von '{ergebnis.schnitt_name}' ...")
         old_ids = self._find_previous_import(ergebnis.schnitt_name)
-        if old_ids:
-            ec.delete_elements_with_undo(old_ids)
 
         flaeche_ids: List[int] = []
         linie_ids: List[int] = []
         fehler: List[SchnittImportFehler] = []
+
+        def _fehler(meldung: str) -> None:
+            print(f"[schnitt_importer] FEHLER {meldung}")
+            fehler.append(SchnittImportFehler(meldung))
 
         gesamt = len(ergebnis.flaechen) + len(ergebnis.linien)
         verarbeitet = 0
@@ -141,63 +202,55 @@ class SchnittImporterService:
             if len(vertices) >= 3:
                 # create_surface erzeugt eine FLACHE Referenzflaeche ohne
                 # Dicken-Parameter (anders als create_polygon_panel) -
-                # passend fuer einen Schnitt/eine Vergleichsreferenz statt
-                # eines echten Bauteils. Ob der Umriss geschlossen
-                # (Schlusspunkt dupliziert) uebergeben werden muss, ist
-                # bisher nicht live verifiziert (anders als bei
-                # create_polygon_panel/create_spline_line, die sich
-                # gegensaetzlich verhalten haben) - hier zunaechst wie bei
-                # create_spline_line NICHT geschlossen versucht.
+                # passend fuer einen Schnitt statt eines echten Bauteils.
+                # Der Umriss wird OFFEN uebergeben (Schlusspunkt nicht
+                # dupliziert), wie im offiziellen Beispiel der cadwork-API-
+                # Doku zu element_controller.create_surface.
                 try:
                     eid = ec.create_surface(_vertex_list(vertices))
                     flaeche_ids.append(eid)
                 except Exception as e:
-                    meldung = f"Flaeche ({flaeche.ifc_element_type} {flaeche.ifc_guid}): {e}"
-                    print(f"[schnitt_importer] FEHLER {meldung}")
-                    fehler.append(SchnittImportFehler(meldung))
+                    _fehler(f"Flaeche ({flaeche.ifc_element_type} {flaeche.ifc_guid}): {e}")
 
             verarbeitet += 1
             if verarbeitet % _PROGRESS_UPDATE_STEP == 0:
                 report(verarbeitet, gesamt, f"Erzeuge Flaechen fuer '{ergebnis.schnitt_name}' ...")
 
         for linie in ergebnis.linien:
-            # Restfaelle: offene (nicht geschlossene) Segmentketten, siehe
-            # schnitt_berechnung.py - selten, einzeln als Linie erzeugt.
+            # Offene Segmentketten und Lochkonturen (siehe
+            # schnitt_berechnung.py) - einzeln als 2-Punkt-Linie erzeugt.
             try:
                 eid = ec.create_line_points(_point_3d(linie.start), _point_3d(linie.end))
                 linie_ids.append(eid)
             except Exception as e:
-                meldung = f"Linie ({linie.ifc_element_type} {linie.ifc_guid}): {e}"
-                print(f"[schnitt_importer] FEHLER {meldung}")
-                fehler.append(SchnittImportFehler(meldung))
+                _fehler(f"Linie ({linie.ifc_element_type} {linie.ifc_guid}): {e}")
 
             verarbeitet += 1
             if verarbeitet % _PROGRESS_UPDATE_STEP == 0:
-                report(verarbeitet, gesamt, f"Erzeuge Restlinien fuer '{ergebnis.schnitt_name}' ...")
-
-        flaechen_verbunden = False
-        if len(flaeche_ids) >= 2:
-            report(gesamt, gesamt, f"Verbinde {len(flaeche_ids)} Flaechen von '{ergebnis.schnitt_name}' ...")
-            try:
-                ec.join_elements(flaeche_ids)
-                flaechen_verbunden = True
-            except Exception as e:
-                meldung = f"Flaechen konnten nicht verbunden werden (join_elements): {e}"
-                print(f"[schnitt_importer] FEHLER {meldung}")
-                fehler.append(SchnittImportFehler(meldung))
+                report(verarbeitet, gesamt, f"Erzeuge Linien fuer '{ergebnis.schnitt_name}' ...")
 
         all_new_ids = flaeche_ids + linie_ids
+
         if all_new_ids:
+            # Marker und Kommentar ZUERST und separat setzen: sie sind die
+            # Grundlage, um diesen Import beim naechsten Mal wiederzufinden.
+            # Schlaegt danach z.B. set_group fehl, entstehen trotzdem keine
+            # unauffindbaren Duplikate.
             try:
-                ac.set_group(all_new_ids, ergebnis.schnitt_name)  # BG
-                ac.set_subgroup(all_new_ids, ReferenceGeometryConfig.BAUUNTERGRUPPE)  # BUG
-                ac.set_name(all_new_ids, ergebnis.schnitt_name)
-                ac.set_comment(all_new_ids, ReferenceGeometryConfig.COMMENT_TAG)
                 ac.set_user_attribute(all_new_ids, ReferenceGeometryConfig.IMPORT_MARKER_ATTRIBUTE_NUMBER, ergebnis.schnitt_name)
+                ac.set_comment(all_new_ids, ReferenceGeometryConfig.COMMENT_TAG)
             except Exception as e:
-                meldung = f"Gruppierung/Attribute konnten nicht gesetzt werden: {e}"
-                print(f"[schnitt_importer] FEHLER {meldung}")
-                fehler.append(SchnittImportFehler(meldung))
+                _fehler(f"Import-Marker konnte nicht gesetzt werden (erneuter Import ersetzt diese Elemente evtl. nicht): {e}")
+
+            for beschreibung, setter, wert in (
+                ("BG (Baugruppe)", ac.set_group, ergebnis.schnitt_name),
+                ("BUG (Bauuntergruppe)", ac.set_subgroup, ReferenceGeometryConfig.BAUUNTERGRUPPE),
+                ("Name", ac.set_name, ergebnis.schnitt_name),
+            ):
+                try:
+                    setter(all_new_ids, wert)
+                except Exception as e:
+                    _fehler(f"{beschreibung} konnte nicht gesetzt werden: {e}")
 
             try:
                 if flaeche_ids:
@@ -205,15 +258,38 @@ class SchnittImporterService:
                 if linie_ids:
                     vc.set_color(linie_ids, ReferenceGeometryConfig.LINE_COLOR)
             except Exception as e:
-                meldung = f"Farbe konnte nicht gesetzt werden: {e}"
-                print(f"[schnitt_importer] FEHLER {meldung}")
-                fehler.append(SchnittImportFehler(meldung))
+                _fehler(f"Farbe konnte nicht gesetzt werden: {e}")
+
+        flaechen_verbunden = False
+        if len(flaeche_ids) >= 2:
+            report(gesamt, gesamt, f"Verbinde {len(flaeche_ids)} Flaechen von '{ergebnis.schnitt_name}' ...")
+            try:
+                # join_elements liefert None, die IDs bleiben gueltig
+                # (verbundene Elemente, siehe get_joined_elements).
+                ec.join_elements(flaeche_ids)
+                flaechen_verbunden = True
+            except Exception as e:
+                _fehler(f"Flaechen konnten nicht verbunden werden (join_elements): {e}")
+
+        # Alten Import erst jetzt entfernen - und nur, wenn der neue
+        # Import ueberhaupt etwas erzeugt hat (oder der Schnitt
+        # tatsaechlich leer ist).
+        ersetzte = 0
+        if old_ids:
+            if all_new_ids or gesamt == 0:
+                try:
+                    ec.delete_elements_with_undo(old_ids)
+                    ersetzte = len(old_ids)
+                except Exception as e:
+                    _fehler(f"Alter Import ({len(old_ids)} Elemente) konnte nicht geloescht werden: {e}")
+            else:
+                _fehler(f"Kein Element neu erzeugt - alter Import ({len(old_ids)} Elemente) bleibt erhalten")
 
         report(gesamt, gesamt, f"'{ergebnis.schnitt_name}' fertig.")
 
         return SchnittImportErgebnis(
             schnitt_name=ergebnis.schnitt_name,
-            ersetzte_alte_elemente=len(old_ids),
+            ersetzte_alte_elemente=ersetzte,
             erzeugte_flaechen=len(flaeche_ids),
             erzeugte_linien=len(linie_ids),
             flaechen_verbunden=flaechen_verbunden,

@@ -15,10 +15,51 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field, asdict
+import re
+from dataclasses import dataclass, field, fields, asdict
 from typing import List, Literal, Optional
 
 FORMAT_VERSION = 1
+
+# Zeichen, die unter Windows in Dateinamen verboten sind (plus
+# Steuerzeichen). "/" und "\\" wuerden sonst sogar Unterordner erzeugen.
+_UNGUELTIGE_DATEINAMEN_ZEICHEN = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_RESERVIERTE_WINDOWS_NAMEN = {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1, 10)} | {f"LPT{i}" for i in range(1, 10)}
+
+
+def sicherer_dateiname(name: str) -> str:
+    """Schnittname -> unter Windows gueltiger Dateinamen-Bestandteil.
+
+    Verbotene Zeichen werden durch "_" ersetzt, abschliessende Punkte/
+    Leerzeichen entfernt. Generator (schreibt) und Plugin (sucht die
+    erzeugten Dateien) muessen dieselbe Funktion verwenden.
+    """
+
+    bereinigt = _UNGUELTIGE_DATEINAMEN_ZEICHEN.sub("_", name).strip().rstrip(". ")
+    if not bereinigt:
+        bereinigt = "_"
+    if bereinigt.upper() in _RESERVIERTE_WINDOWS_NAMEN:
+        bereinigt = f"_{bereinigt}"
+    return bereinigt
+
+
+def exchange_dateiname(projekt_nummer: str, schnitt_name: str, suffix: str = ".ifccut.json") -> str:
+    """Dateiname der Zwischendatei eines Schnitts: "<projekt>_<schnittname>.ifccut.json"."""
+
+    return f"{sicherer_dateiname(projekt_nummer or '')}_{sicherer_dateiname(schnitt_name)}{suffix}"
+
+
+class SchnittFormatError(ValueError):
+    """Zwischendatei hat eine unbekannte (neuere) Formatversion."""
+
+
+def _bekannte_felder(cls, data: dict) -> dict:
+    """Nur die Felder der Dataclass uebernehmen - unbekannte (z.B. von einer
+    neueren Generator-Version ergaenzte) Schluessel werden ignoriert statt
+    einen TypeError auszuloesen."""
+
+    namen = {f.name for f in fields(cls)}
+    return {k: v for k, v in data.items() if k in namen}
 
 SchnittTyp = Literal["horizontal", "vertikal"]
 
@@ -79,10 +120,16 @@ class SchnittErgebnis:
     @staticmethod
     def from_json(text: str) -> "SchnittErgebnis":
         data = json.loads(text)
-        data["ebene"] = SchnittEbene(**data["ebene"])
-        data["flaechen"] = [SchnittFlaeche(**f) for f in data.get("flaechen", [])]
-        data["linien"] = [SchnittLinie(**l) for l in data.get("linien", [])]
-        return SchnittErgebnis(**data)
+        version = data.get("format_version")
+        if not isinstance(version, int) or version > FORMAT_VERSION:
+            raise SchnittFormatError(
+                f"Zwischendatei hat Formatversion {version!r}, dieses Plugin kennt nur bis Version {FORMAT_VERSION}. "
+                "Bitte Plugin aktualisieren oder die Schnitte neu generieren."
+            )
+        data["ebene"] = SchnittEbene(**_bekannte_felder(SchnittEbene, data["ebene"]))
+        data["flaechen"] = [SchnittFlaeche(**_bekannte_felder(SchnittFlaeche, f)) for f in data.get("flaechen", [])]
+        data["linien"] = [SchnittLinie(**_bekannte_felder(SchnittLinie, l)) for l in data.get("linien", [])]
+        return SchnittErgebnis(**_bekannte_felder(SchnittErgebnis, data))
 
 
 def save_schnitt_ergebnis(ergebnis: SchnittErgebnis, file_path: str) -> None:

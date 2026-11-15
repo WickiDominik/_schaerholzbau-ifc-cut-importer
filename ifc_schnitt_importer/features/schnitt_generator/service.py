@@ -27,7 +27,9 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import threading
+import time
 from dataclasses import asdict, dataclass, field
 from typing import Callable, List, Optional
 
@@ -41,12 +43,26 @@ from ifc_schnitt_importer.shared.schnitt_definition import (
     SchnittDefinitionExport,
     SchnittDefinitionFehler,
 )
+from ifc_schnitt_importer.shared.schnitt_format import sicherer_dateiname
 
 LineCallback = Optional[Callable[[str], None]]
 
 
 class GeneratorToolNichtEingerichtetError(RuntimeError):
     """Die venv des externen generator_tool wurde noch nicht angelegt."""
+
+
+@dataclass
+class ProjektKontext:
+    """Cadwork-Projektdaten, die der Generator braucht.
+
+    Werden auf dem Hauptthread ermittelt (Cadwork-API) und dann an
+    generate_schnitte() im Hintergrund-Thread durchgereicht - dort darf
+    keine Cadwork-API mehr aufgerufen werden.
+    """
+
+    projekt_nummer: str
+    project_3d_file_path: str
 
 
 @dataclass
@@ -100,14 +116,60 @@ class SchnittGeneratorService:
                 if not text or not text.strip():
                     continue
 
+                # Ein Text ganz ohne "=" ist keine (auch keine fehlerhafte)
+                # Schnitt-Definition, sondern ein anderweitig genutztes
+                # Attribut - still ueberspringen statt als Fehler melden.
+                if "=" not in text:
+                    continue
+
                 geparste, zeilen_fehler = SchnittDefinition.parse_multiple_from_text(text, source_element_id=element_id)
                 definitionen.extend(geparste)
                 for meldung in zeilen_fehler:
                     fehler.append(SchnittDefinitionFehler(element_id=element_id, fehler=f"Attribut {attribute_number}, {meldung}"))
 
+        definitionen = self._entferne_doppelte_namen(definitionen, fehler)
         return SchnittDefinitionExport(definitionen=definitionen, fehler=fehler)
 
-    def export_schnitt_definitionen(self) -> tuple[SchnittDefinitionExport, str]:
+    @staticmethod
+    def _entferne_doppelte_namen(
+        definitionen: List[SchnittDefinition], fehler: List[SchnittDefinitionFehler]
+    ) -> List[SchnittDefinition]:
+        """Zwei Definitionen mit demselben (Datei-)Namen wuerden sich
+        gegenseitig die Zwischendatei und beim Import die BG
+        ueberschreiben. Die erste gewinnt, jede weitere wird als Fehler
+        gemeldet. Verglichen wird der bereinigte Dateiname ohne Gross-/
+        Kleinschreibung (Windows-Dateisystem), damit z.B. "EG/OG" und
+        "EG_OG" ebenfalls als Duplikat erkannt werden."""
+
+        gesehen: dict = {}
+        eindeutige: List[SchnittDefinition] = []
+        for definition in definitionen:
+            schluessel = sicherer_dateiname(definition.name).casefold()
+            if schluessel in gesehen:
+                erste = gesehen[schluessel]
+                fehler.append(
+                    SchnittDefinitionFehler(
+                        element_id=definition.source_element_id,
+                        fehler=(
+                            f"Schnittname '{definition.name}' ist bereits vergeben "
+                            f"(Element {erste.source_element_id}: '{erste.name}') - Definition ignoriert"
+                        ),
+                    )
+                )
+                continue
+            gesehen[schluessel] = definition
+            eindeutige.append(definition)
+        return eindeutige
+
+    def projekt_kontext(self) -> ProjektKontext:
+        """Cadwork-Projektdaten lesen - nur auf dem Hauptthread aufrufen."""
+
+        return ProjektKontext(
+            projekt_nummer=uc.get_project_number(),
+            project_3d_file_path=uc.get_3d_file_path(),
+        )
+
+    def export_schnitt_definitionen(self, kontext: Optional[ProjektKontext] = None) -> tuple[SchnittDefinitionExport, str]:
         """Scan + write the bridging file for the external generator_tool.
 
         Returns (scan_result, written_file_path).
@@ -115,12 +177,14 @@ class SchnittGeneratorService:
 
         result = self.scan_schnitt_definitionen()
 
-        project_3d_file_path = uc.get_3d_file_path()
+        if kontext is None:
+            kontext = self.projekt_kontext()
+        project_3d_file_path = kontext.project_3d_file_path
         target_path = PathConfig.get_schnitt_definitionen_file_path(project_3d_file_path)
 
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
         payload = {
-            "projekt_nummer": uc.get_project_number(),
+            "projekt_nummer": kontext.projekt_nummer,
             "quelle_3d_datei": project_3d_file_path,
             "definitionen": [asdict(d) for d in result.definitionen],
         }
@@ -145,6 +209,7 @@ class SchnittGeneratorService:
         ifc_datei: str,
         definitionen_export: SchnittDefinitionExport,
         definitionen_datei: str,
+        kontext: ProjektKontext,
         line_callback: LineCallback = None,
     ) -> SchnitteGenerierenErgebnis:
         """Laesst das externe generator_tool aus der IFC + den (bereits
@@ -152,7 +217,8 @@ class SchnittGeneratorService:
 
         `definitionen_export`/`definitionen_datei` kommen von einem
         vorherigen `export_schnitt_definitionen()`-Aufruf auf dem
-        Cadwork-Hauptthread (nutzt die Cadwork-API). Diese Methode selbst
+        Cadwork-Hauptthread (nutzt die Cadwork-API), ebenso `kontext`
+        (Projektnummer/3D-Pfad, siehe projekt_kontext()). Diese Methode selbst
         ruft KEINE Cadwork-API mehr auf - nur noch Subprozess/Dateisystem
         - und kann daher vom Aufrufer (siehe app/main_window.py) gefahrlos
         in einem Hintergrund-Thread laufen, damit Cadworks UI waehrend
@@ -184,6 +250,10 @@ class SchnittGeneratorService:
         cli_script = self._cli_script_path()
         args = [
             venv_python,
+            # -u: ungepufferte Ausgabe. Ohne das puffert Python im
+            # Kindprozess stdout blockweise (stdout ist eine Pipe), und die
+            # Fortschrittszeilen kaemen erst gesammelt am Ende an.
+            "-u",
             cli_script,
             "--ifc", ifc_datei,
             "--definitionen", definitionen_datei,
@@ -192,16 +262,29 @@ class SchnittGeneratorService:
 
         env = dict(os.environ)
         env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUNBUFFERED"] = "1"
 
+        # Dateisystem-Zeitstempel koennen leicht ungenau sein (FAT/Netz-
+        # laufwerke: 2s) - etwas Puffer, damit eine soeben geschriebene
+        # Datei sicher als "neu" zaehlt.
+        start_zeit = time.time() - 2.0
         erfolgreich = self._run_streaming(args, env, line_callback)
 
+        # Nur Dateien zaehlen, die in DIESEM Lauf geschrieben wurden - eine
+        # Zwischendatei vom letzten Lauf ist kein Erfolg des aktuellen.
+        # Kein Cadwork-API-Aufruf hier (Hintergrund-Thread!), Projektdaten
+        # kommen aus `kontext`.
         erzeugte_dateien = []
         if erfolgreich:
-            projekt_nummer = uc.get_project_number()
             for definition in definitionen_export.definitionen:
-                erwartete_datei = PathConfig.get_exchange_file_path(uc.get_3d_file_path(), projekt_nummer, definition.name)
-                if os.path.isfile(erwartete_datei):
-                    erzeugte_dateien.append(erwartete_datei)
+                erwartete_datei = PathConfig.get_exchange_file_path(
+                    kontext.project_3d_file_path, kontext.projekt_nummer, definition.name
+                )
+                try:
+                    if os.path.getmtime(erwartete_datei) >= start_zeit:
+                        erzeugte_dateien.append(erwartete_datei)
+                except OSError:
+                    pass
 
         return SchnitteGenerierenErgebnis(
             definitionen_export=definitionen_export,
@@ -226,6 +309,8 @@ class SchnittGeneratorService:
             errors="replace",
             env=env,
             bufsize=1,
+            # Unter Windows sonst kurz ein leeres Konsolenfenster.
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0,
         )
 
         timed_out = {"value": False}

@@ -9,9 +9,6 @@ class AppConfig:
     APP_NAME = "Holzbau IFC Schnitt Importer"
     VERSION = "0.1.0"
 
-    USER = os.environ.get("USERNAME", "").lower()
-    ADMIN_USERS = ("domiw", "dominik.wicki", "boas.haenseler")
-
     # UI Configuration (aligned with schaerholzbau Toolcenter look & feel)
     BUTTON_COLOR = "navajowhite3"
     BUTTON_WIDTH = 24
@@ -45,9 +42,10 @@ class PathConfig:
 
     @classmethod
     def get_exchange_file_path(cls, project_3d_file_path: str, project_number: str, schnitt_name: str) -> str:
+        from ifc_schnitt_importer.shared.schnitt_format import exchange_dateiname
+
         directory = cls.get_exchange_directory(project_3d_file_path)
-        filename = f"{project_number}_{schnitt_name}{cls.EXCHANGE_FILE_SUFFIX}"
-        return os.path.join(directory, filename)
+        return os.path.join(directory, exchange_dateiname(project_number, schnitt_name, cls.EXCHANGE_FILE_SUFFIX))
 
 
 class GeneratorToolConfig:
@@ -117,10 +115,20 @@ class ReferenceGeometryConfig:
 
     # Benutzerattribut-Nummer, die bei jedem importierten Element den
     # Schnittnamen traegt - dient dem Wiederfinden/Ersetzen bei erneutem
-    # Import desselben Schnitts. Bewusst getrennt von
-    # SchnittDefinitionConfig.ATTRIBUTE_NUMBER (andere Elemente/Zweck).
-    IMPORT_MARKER_ATTRIBUTE_NUMBER = 21
+    # Import desselben Schnitts. Muss AUSSERHALB von
+    # SchnittDefinitionConfig.attribute_numbers() (20-29) liegen, sonst
+    # werden importierte Flaechen beim naechsten Generieren als
+    # Schnitt-Definition gelesen und die Attribut-Beschriftungen
+    # ueberschreiben sich gegenseitig.
+    IMPORT_MARKER_ATTRIBUTE_NUMBER = 30
     IMPORT_MARKER_ATTRIBUTE_LABEL = "IFC Schnitt Import"
+
+    # Fruehere Marker-Nummern (bis 2026-11 lag der Marker auf 21, mitten
+    # im Definitions-Bereich). Werden beim Wiederfinden eines frueheren
+    # Imports zusaetzlich geprueft, damit bestehende Projekte beim
+    # naechsten Import sauber ersetzt (und dabei auf Nr. 30 migriert)
+    # werden.
+    LEGACY_IMPORT_MARKER_ATTRIBUTE_NUMBERS = (21,)
 
 
 class UITextConfig:

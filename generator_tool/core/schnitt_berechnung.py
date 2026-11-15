@@ -10,11 +10,17 @@ wird je Bauteil der Schnitt mit der Ebene berechnet:
 2. Die Liniensegmente eines Bauteils werden zu Polylinien verkettet
    (Endpunkt-Matching mit Toleranz). Geschlossene Ketten (der Normalfall
    bei einem wasserdichten Solid wie Wand/Decke/Stuetze) ergeben je eine
-   gefuellte Schnittflaeche (SchnittFlaeche) - deren Kontur wird beim
-   Import direkt aus den Eckpunkten als EIN zusammenhaengendes Element
-   erzeugt, siehe schnitt_importer/service.py; offene Ketten (seltener
-   Sonderfall, z.B. unvollstaendige Triangulierung) liefern einzelne
+   gefuellte Schnittflaeche (SchnittFlaeche). Liegt ein geschlossener
+   Ring INNERHALB eines anderen Rings desselben Bauteils (Loch, z.B.
+   Hohlprofil, Schachtwand, Aussparung), wird er nicht gefuellt, sondern
+   als Lochkontur (SchnittLinie-Segmente) ausgegeben - sonst laege eine
+   gefuellte Flaeche ueber dem Loch. Offene Ketten (seltener Sonderfall,
+   z.B. unvollstaendige Triangulierung) liefern ebenfalls einzelne
    SchnittLinie-Segmente ohne zugehoerige Flaeche.
+
+Vorab wird je Bauteil die Bounding-Box gegen die Ebene geprueft:
+Bauteile, die die Ebene nicht beruehren (bei einem Schnitt die grosse
+Mehrheit), werden uebersprungen, ohne ihre Dreiecke anzufassen.
 
 Reines Python, keine ifcopenshell-Abhaengigkeit - dadurch unit-testbar
 ohne IFC-Datei (siehe generator_tool/tests/test_schnitt_berechnung.py).
@@ -266,6 +272,56 @@ def _chain_segments(
     return chains
 
 
+def _ebene_trifft_bbox(bbox, origin: Point3, normal: Point3) -> bool:
+    """True, wenn die Ebene die achsparallele Box (min, max) schneidet oder
+    beruehrt. Ohne Box (None) sicherheitshalber True."""
+
+    if bbox is None:
+        return True
+    (x0, y0, z0), (x1, y1, z1) = bbox
+    hat_positiv = hat_negativ = False
+    for x in (x0, x1):
+        for y in (y0, y1):
+            for z in (z0, z1):
+                d = _dot(_sub((x, y, z), origin), normal)
+                if d >= -EPSILON_MM:
+                    hat_positiv = True
+                if d <= EPSILON_MM:
+                    hat_negativ = True
+                if hat_positiv and hat_negativ:
+                    return True
+    return False
+
+
+def _ebenen_basis(normal: Point3) -> Tuple[Point3, Point3]:
+    """Zwei orthonormale Richtungen (u, v) in der Ebene mit Normale `normal`."""
+
+    hilfs = (1.0, 0.0, 0.0) if abs(normal[0]) < 0.9 else (0.0, 1.0, 0.0)
+    u = normalize(_cross(normal, hilfs))
+    v = _cross(normal, u)
+    return u, v
+
+
+def _cross(a: Point3, b: Point3) -> Point3:
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def _punkt_in_polygon_2d(punkt: Tuple[float, float], polygon: List[Tuple[float, float]]) -> bool:
+    """Ray-Casting (gerade/ungerade Regel) fuer ein einfaches 2D-Polygon."""
+
+    x, y = punkt
+    innen = False
+    n = len(polygon)
+    for i in range(n):
+        x1, y1 = polygon[i]
+        x2, y2 = polygon[(i + 1) % n]
+        if (y1 > y) != (y2 > y):
+            x_schnitt = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
+            if x < x_schnitt:
+                innen = not innen
+    return innen
+
+
 def berechne_schnitt(
     ebene: SchnittEbene,
     bauteile: Iterable[IfcBauteilGeometrie],
@@ -278,6 +334,9 @@ def berechne_schnitt(
 
     for bauteil in bauteile:
         try:
+            if not _ebene_trifft_bbox(bauteil.bounding_box(), origin, normal):
+                continue
+
             segments = []
             for triangle in bauteil.dreiecke:
                 segment = _triangle_plane_intersection(triangle, origin, normal)
@@ -287,7 +346,7 @@ def berechne_schnitt(
             if not segments:
                 continue
 
-            bauteil_flaechen, bauteil_linien = _bauteil_schnitt(bauteil, segments)
+            bauteil_flaechen, bauteil_linien = _bauteil_schnitt(bauteil, segments, normal)
             flaechen.extend(bauteil_flaechen)
             linien.extend(bauteil_linien)
         except Exception as e:
@@ -303,44 +362,71 @@ def berechne_schnitt(
 
 
 def _bauteil_schnitt(
-    bauteil: IfcBauteilGeometrie, segments: List[Tuple[Point3, Point3]]
+    bauteil: IfcBauteilGeometrie, segments: List[Tuple[Point3, Point3]], normal: Point3 = (0.0, 0.0, 1.0)
 ) -> Tuple[List[SchnittFlaeche], List[SchnittLinie]]:
-    """Verkettet die Schnittsegmente EINES Bauteils zu Flaechen/Linien."""
+    """Verkettet die Schnittsegmente EINES Bauteils zu Flaechen/Linien.
+
+    Geschlossene Ringe werden nach Verschachtelungstiefe eingeordnet:
+    Tiefe 0 (aeusserer Umriss) und jede weitere gerade Tiefe (Insel in
+    einem Loch) werden Flaechen, ungerade Tiefen (Loecher) werden als
+    Kontur-Linien ausgegeben - eine Cadwork-Flaeche (create_surface)
+    kann selbst keine Loecher tragen.
+    """
 
     flaechen: List[SchnittFlaeche] = []
     linien: List[SchnittLinie] = []
 
+    def _als_linien(points: List[Point3]) -> None:
+        for i in range(len(points) - 1):
+            linien.append(
+                SchnittLinie(
+                    start=list(points[i]),
+                    end=list(points[i + 1]),
+                    ifc_element_type=bauteil.ifc_type,
+                    ifc_guid=bauteil.ifc_guid,
+                )
+            )
+
+    ringe: List[List[Point3]] = []
     for raw_points, is_closed in _chain_segments(segments):
         points = _simplify_collinear(raw_points, is_closed)
         if len(points) < 2:
             continue
 
-        if is_closed:
-            # Geschlossene Kette -> eine Flaeche. Die zugehoerige
-            # Kontur-Linie wird beim Import direkt aus den
-            # Flaechen-Eckpunkten als EIN zusammenhaengendes Element
-            # erzeugt (siehe schnitt_importer/service.py) statt hier
-            # als N einzelne Kantensegmente dupliziert zu werden.
-            # Letzter Punkt ist die Wiederholung des ersten (Ring) -> weglassen.
-            flaechen.append(
-                SchnittFlaeche(
-                    vertices=[list(p) for p in points[:-1]],
-                    ifc_element_type=bauteil.ifc_type,
-                    ifc_guid=bauteil.ifc_guid,
-                )
-            )
+        if is_closed and len(points) >= 4:  # >= 3 Ecken + Ring-Wiederholung
+            ringe.append(points)
         else:
             # Offene (nicht geschlossene) Kette - seltener Sonderfall
             # (z.B. unvollstaendige Triangulierung). Kein Flaechen-
-            # Aequivalent, daher weiterhin als einzelne Segmente.
-            for i in range(len(points) - 1):
-                linien.append(
-                    SchnittLinie(
-                        start=list(points[i]),
-                        end=list(points[i + 1]),
-                        ifc_element_type=bauteil.ifc_type,
-                        ifc_guid=bauteil.ifc_guid,
-                    )
-                )
+            # Aequivalent, daher als einzelne Segmente.
+            _als_linien(points)
+
+    if not ringe:
+        return flaechen, linien
+
+    # Ringe in 2D-Ebenenkoordinaten projizieren, Verschachtelung bestimmen.
+    u, v = _ebenen_basis(normal)
+    ringe_2d = [[(_dot(p, u), _dot(p, v)) for p in ring[:-1]] for ring in ringe]
+
+    for index, ring in enumerate(ringe):
+        test_punkt = ringe_2d[index][0]
+        tiefe = sum(
+            1
+            for anderer_index, anderer in enumerate(ringe_2d)
+            if anderer_index != index and _punkt_in_polygon_2d(test_punkt, anderer)
+        )
+        if tiefe % 2 == 1:
+            # Loch: nicht fuellen, sondern Kontur inkl. Schlusskante ausgeben.
+            _als_linien(ring)
+            continue
+
+        # Letzter Punkt ist die Wiederholung des ersten (Ring) -> weglassen.
+        flaechen.append(
+            SchnittFlaeche(
+                vertices=[list(p) for p in ring[:-1]],
+                ifc_element_type=bauteil.ifc_type,
+                ifc_guid=bauteil.ifc_guid,
+            )
+        )
 
     return flaechen, linien

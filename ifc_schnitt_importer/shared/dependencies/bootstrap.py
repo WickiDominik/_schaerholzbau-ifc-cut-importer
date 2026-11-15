@@ -1,9 +1,9 @@
 """Dependency bootstrap for the IFC Schnitt Importer plugin.
 
-Unlike the schaerholzbau Toolcenter, this plugin currently needs NO third
-party packages: the whole IFC handling goes through Cadwork's own
-`bim_controller` (see cadwork_api/bim.py), and the UI is plain Tkinter
-(stdlib). This file exists mainly so the structure matches the Toolcenter
+Unlike the schaerholzbau Toolcenter, the Cadwork-side plugin currently
+needs NO third party packages: the IFC geometry is processed by the
+external generator_tool/ (own venv with ifcopenshell, started as a
+subprocess), and the UI is plain Tkinter (stdlib). This file exists mainly so the structure matches the Toolcenter
 conventions and so we have a single place to wire in a
 `site-packages-pyX.Y` folder later if a feature ever needs one (e.g. an
 optional pure-Python fallback parser).

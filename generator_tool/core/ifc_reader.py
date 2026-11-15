@@ -14,7 +14,7 @@ ist (ermittelt ueber ifcopenshell.util.unit).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterator, List, Tuple
+from typing import Iterator, List, Optional, Tuple
 
 Point3 = Tuple[float, float, float]
 Triangle = Tuple[Point3, Point3, Point3]
@@ -65,6 +65,19 @@ class IfcBauteilGeometrie:
     ifc_type: str
     # Weltkoordinaten-Dreiecksnetz (mm), Liste von (p0, p1, p2)-Tripeln.
     dreiecke: List[Triangle] = field(default_factory=list)
+    # Achsparallele Bounding-Box (min, max) in mm - wird beim ersten
+    # Bedarf aus `dreiecke` berechnet (siehe bounding_box()). Dient der
+    # schnellen Vorpruefung, ob eine Schnittebene das Bauteil ueberhaupt
+    # trifft, bevor alle Dreiecke einzeln geprueft werden.
+    bbox: Optional[Tuple[Point3, Point3]] = None
+
+    def bounding_box(self) -> Optional[Tuple[Point3, Point3]]:
+        if self.bbox is None and self.dreiecke:
+            xs = [p[0] for tri in self.dreiecke for p in tri]
+            ys = [p[1] for tri in self.dreiecke for p in tri]
+            zs = [p[2] for tri in self.dreiecke for p in tri]
+            self.bbox = ((min(xs), min(ys), min(zs)), (max(xs), max(ys), max(zs)))
+        return self.bbox
 
 
 def _mm_scale_factor(ifc_file) -> float:
@@ -183,9 +196,16 @@ def lade_bauteile(ifc_file_path: str, ifc_classes: Tuple[str, ...] = RELEVANT_IF
             for i in range(0, len(faces), 3):
                 dreiecke.append((points[faces[i]], points[faces[i + 1]], points[faces[i + 2]]))
 
+            bbox = None
+            if points:
+                xs = [p[0] for p in points]
+                ys = [p[1] for p in points]
+                zs = [p[2] for p in points]
+                bbox = ((min(xs), min(ys), min(zs)), (max(xs), max(ys), max(zs)))
+
             # Name mit anhaengen, wo vorhanden (z.B. "Daemmung", "OSB" bei
             # IfcBuildingElementPart-Schichten) - hilft beim spaeteren
             # Zuordnen/Beschriften der importierten Cadwork-Referenzgeometrie.
             bauteil_typ = f"{ifc_class} ({element.Name})" if element.Name else ifc_class
 
-            yield IfcBauteilGeometrie(ifc_guid=element.GlobalId, ifc_type=bauteil_typ, dreiecke=dreiecke)
+            yield IfcBauteilGeometrie(ifc_guid=element.GlobalId, ifc_type=bauteil_typ, dreiecke=dreiecke, bbox=bbox)

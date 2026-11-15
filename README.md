@@ -59,10 +59,15 @@ siehe `ifc_schnitt_importer/app/config.py` → `SchnittDefinitionConfig`):
 Name=Schnitt A-A;Typ=vertikal;Ursprung=1234.5,6789.0,0;Richtung=0,1,0
 ```
 
-- `Name`: Schnittname (wird zu Dateiname, Cadwork-Gruppe/BG)
-- `Typ`: `horizontal` oder `vertikal`
+- `Name`: Schnittname (wird zu Dateiname, Cadwork-Gruppe/BG), im ganzen
+  Modell eindeutig
+- `Typ`: `horizontal` oder `vertikal` (muss zur `Richtung` passen)
 - `Ursprung`: ein Punkt auf der Schnittebene, `x,y,z` in mm
 - `Richtung`: die Ebenennormale, `x,y,z`
+
+Importierte Elemente tragen den Schnittnamen in Benutzerattribut 30
+(nicht in 20–29 verwenden), darüber werden sie bei einem erneuten Import
+ersetzt.
 
 Zur Ermittlung sinnvoller Koordinaten für ein konkretes Projekt:
 

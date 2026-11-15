@@ -9,19 +9,24 @@ desired.
 import datetime
 import json
 import os
-import sys
 import traceback
 import uuid
-from typing import Any, Optional
+from typing import Optional
 
-_LOG_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "logs"))
-_LOG_FILE = os.path.join(_LOG_DIR, "ifc_schnitt_importer_logs.json")
+from ifc_schnitt_importer.shared.user_paths import user_data_dir
+
+_LOG_FILENAME = "ifc_schnitt_importer_logs.json"
+
+
+def _log_file() -> str:
+    return os.path.join(user_data_dir("logs"), _LOG_FILENAME)
 
 
 def _load_log_data():
     try:
-        if os.path.exists(_LOG_FILE):
-            with open(_LOG_FILE, "r", encoding="utf-8") as f:
+        log_file = _log_file()
+        if os.path.exists(log_file):
+            with open(log_file, "r", encoding="utf-8") as f:
                 return json.load(f)
     except Exception:
         pass
@@ -30,8 +35,7 @@ def _load_log_data():
 
 def _save_log_data(data):
     try:
-        os.makedirs(_LOG_DIR, exist_ok=True)
-        with open(_LOG_FILE, "w", encoding="utf-8") as f:
+        with open(_log_file(), "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
     except Exception as e:
         print(f"[ifc_schnitt_importer] logging error: {e}")
@@ -55,7 +59,11 @@ def log_error_json(
             "function_name": function_name or "",
             "error_type": type(error).__name__,
             "error_message": str(error),
-            "stack_trace": traceback.format_exc(),
+            # Aus dem Exception-Objekt selbst, nicht format_exc(): log_error_json
+            # wird auch ausserhalb eines except-Blocks aufgerufen (z.B. mit
+            # einer Exception aus dem Generator-Thread), dort lieferte
+            # format_exc() nur "NoneType: None".
+            "stack_trace": "".join(traceback.format_exception(type(error), error, error.__traceback__)),
             "context": context or {},
         }
         data = _load_log_data()
@@ -65,16 +73,3 @@ def log_error_json(
     except Exception as e:
         print(f"[ifc_schnitt_importer] JSON error logging failed: {e}")
 
-
-def install_exception_hooks(default_module: str = "unknown"):
-    previous = getattr(sys, "excepthook", None)
-
-    def _hook(exc_type, exc_value, exc_tb):
-        try:
-            if isinstance(exc_value, BaseException):
-                log_error_json(exc_value, module=default_module, action="uncaught_exception")
-        finally:
-            if callable(previous):
-                previous(exc_type, exc_value, exc_tb)
-
-    sys.excepthook = _hook
