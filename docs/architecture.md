@@ -41,15 +41,17 @@ _schaerholzbau-ifc-schnitt-importer/
 |  |- shared/                Von Cadwork-Plugin UND generator_tool/ gemeinsam genutzt (reines Python)
 |  |  |- schnitt_definition.py  Benutzerattribut-Textformat (Stufe 1 -> Stufe 2)
 |  |  |- schnitt_format.py      Schnitt-Ergebnis-JSON (Stufe 2 -> Stufe 3)
-|  |  |- logging.py             JSON-Fehlerlogging
+|  |  |- logging.py             JSON-Fehlerlogging (pro Benutzer unter %APPDATA%)
+|  |  |- local_settings.py      lokale UI-Einstellungen (pro Benutzer unter %APPDATA%)
+|  |  |- user_paths.py          %APPDATA%\schaerholzbau\ifc_schnitt_importer\{settings,logs}
 |  |  |- window_utils.py        Tk-Root/Toplevel-Handling (Shell vs. API)
 |  |  `- dependencies/          Bootstrap-Erweiterungspunkt (aktuell keine externen Pakete noetig)
 |  |- resources/icons/
-|  |- settings/
-|  |- logs/
+|  |- settings/             nur Rueckfall, falls %APPDATA% nicht beschreibbar ist
+|  |- logs/                 nur Rueckfall, falls %APPDATA% nicht beschreibbar ist
 |  `- tests/
 |     |- manual/            gegen die echte Cadwork-API laufende Testskripte
-|     `- unit/
+|     `- unit/              reine Python-Tests (Formate, Services mit gefaelschter Cadwork-API)
 `- generator_tool/           Eigenstaendiges CLI-Tool, eigene Python-Umgebung (siehe README.md)
    |- schnitt_generator.py   CLI-Einstiegspunkt
    |- requirements.txt       ifcopenshell
@@ -73,7 +75,14 @@ in `ifc_schnitt_importer/cadwork_api/*` erlaubt.
 ```powershell
 python -m compileall ifc_schnitt_importer
 python -m py_compile _schaerholzbau-ifc-schnitt-importer.py
+
+# Unit-Tests (laufen ohne Cadwork und ohne ifcopenshell)
+python generator_tool/tests/test_schnitt_berechnung.py
+python ifc_schnitt_importer/tests/unit/test_shared_formate.py
+python ifc_schnitt_importer/tests/unit/test_services.py
 ```
+
+Alle Testdateien laufen auch mit `pytest`, falls installiert.
 
 (Ausserhalb von Cadwork schlagen Importe von `bim_controller` etc.
 erwartungsgemaess fehl - diese sind nur im eingebetteten Cadwork-Python

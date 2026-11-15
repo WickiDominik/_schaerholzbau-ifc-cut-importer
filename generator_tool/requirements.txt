@@ -1,3 +1,5 @@
-# IFC-Geometrie-Kern fuer die Schnittberechnung (Etappe 3).
-# Unterstuetzt Python 3.9-3.12 (kein 3.13/3.14) - siehe README.md.
-ifcopenshell
+# IFC-Geometrie-Kern fuer die Schnittberechnung.
+# Version fest, damit alle Rechner dieselbe Geometrie-Engine verwenden;
+# 0.8.5 ist auf Python 3.13 getestet (siehe README.md). Beim Anheben der
+# Version die Unit-Tests und einen Schnitt einer Projekt-IFC gegenpruefen.
+ifcopenshell==0.8.5

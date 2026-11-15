@@ -15,15 +15,13 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 if script_dir not in sys.path:
     sys.path.insert(0, script_dir)
 
-from ifc_schnitt_importer.app.bootstrap import bootstrap_environment
+from ifc_schnitt_importer.app.bootstrap import bootstrap_environment, clear_namespaced_modules
 
 bootstrap_environment()
 
 # Clear only our namespaced modules so Cadwork picks up changes on disk
 # without touching other plugins' generic module names.
-for mod_name in list(sys.modules.keys()):
-    if mod_name.startswith("ifc_schnitt_importer.") and mod_name != "ifc_schnitt_importer.app.bootstrap":
-        del sys.modules[mod_name]
+clear_namespaced_modules()
 
 from ifc_schnitt_importer.app.main import cadwork_menu as _cadwork_menu
 
@@ -33,7 +31,6 @@ def cadwork_menu():
     return _cadwork_menu()
 
 
-if __name__ == "__main__":
-    cadwork_menu()
-else:
-    cadwork_menu()
+# Cadwork fuehrt diese Datei beim Klick auf das Plugin aus - das Menue
+# wird daher immer direkt angezeigt (egal ob als __main__ oder importiert).
+cadwork_menu()

@@ -5,9 +5,11 @@ IFC-Datei und die vom Cadwork-Plugin exportierten Schnitt-Definitionen,
 berechnet je Definition den Ebenenschnitt und schreibt das Ergebnis als
 Zwischendatei fuer den Cadwork-seitigen "IFC Schnitt Importer".
 
-STATUS: Etappe 3 (Geruest). Die CLI und der Datenfluss stehen; die
-eigentliche Geometrie-Berechnung ist in core/ifc_reader.py und
-core/schnitt_berechnung.py noch TODO.
+Wird normalerweise vom Cadwork-Plugin als Subprozess gestartet (siehe
+ifc_schnitt_importer/features/schnitt_generator/service.py), kann aber
+auch direkt im Terminal laufen. Die Fortschrittszeilen auf stdout werden
+vom Plugin per Regex ausgewertet (app/main_window.py) - Format beim
+Aendern dort mitziehen.
 """
 
 from __future__ import annotations
@@ -28,7 +30,13 @@ if _PROJECT_ROOT not in sys.path:
 from generator_tool.core.ifc_reader import lade_bauteile
 from generator_tool.core.schnitt_berechnung import berechne_schnitt
 from generator_tool.core.schnitt_definitionen import load_schnitt_definitionen
-from ifc_schnitt_importer.shared.schnitt_format import SchnittEbene, SchnittErgebnis, save_schnitt_ergebnis
+from ifc_schnitt_importer.shared.schnitt_format import (
+    FORMAT_VERSION,
+    SchnittEbene,
+    SchnittErgebnis,
+    exchange_dateiname,
+    save_schnitt_ergebnis,
+)
 
 
 def parse_args():
@@ -59,7 +67,7 @@ def main():
         flaechen, linien = berechne_schnitt(ebene, bauteile)
 
         ergebnis = SchnittErgebnis(
-            format_version=1,
+            format_version=FORMAT_VERSION,
             schnitt_name=definition.name,
             schnitt_typ=definition.typ,
             projekt_nummer=definitionen_datei.projekt_nummer,
@@ -70,9 +78,9 @@ def main():
             linien=linien,
         )
 
-        target_path = os.path.join(
-            args.output, f"{definitionen_datei.projekt_nummer}_{definition.name}.ifccut.json"
-        )
+        # Gleiche Namensbildung wie im Plugin (PathConfig.get_exchange_file_path),
+        # inkl. Bereinigung von unter Windows ungueltigen Zeichen.
+        target_path = os.path.join(args.output, exchange_dateiname(definitionen_datei.projekt_nummer, definition.name))
         save_schnitt_ergebnis(ergebnis, target_path)
         print(f"  -> {definition.name}: {len(flaechen)} Flaechen, {len(linien)} Linien -> {target_path}")
 

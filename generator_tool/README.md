@@ -31,13 +31,18 @@ jeweilige Python-Version tatsaechlich verfuegbare Version an.
     --output "<Projekt>\IFC_Schnitte"
 ```
 
-- `--definitionen`: wird vom Cadwork-Plugin (Menuepunkt "IFC Schnitt
-  Generator") aus den Benutzerattributen der markierten Elemente erzeugt.
+- `--definitionen`: wird vom Cadwork-Plugin (Fenster "IFC Schnitt
+  Generator/Importer", Schritt 1) aus den Benutzerattributen 20-29 aller
+  Elemente erzeugt.
 - `--output`: derselbe `IFC_Schnitte`-Ordner, aus dem das Cadwork-Plugin
-  ("IFC Schnitt Importer") die Ergebnisse anschliessend einliest.
+  (gleiches Fenster, Schritt 2) die Ergebnisse anschliessend einliest.
+
+Im Normalfall startet das Plugin dieses Tool selbst als Subprozess - der
+manuelle Aufruf ist nur fuer Tests/Fehlersuche noetig.
 
 Pro Schnitt-Definition entsteht eine Datei
-`<projekt>_<schnittname>.ifccut.json` (Format: siehe
+`<projekt>_<schnittname>.ifccut.json` (unter Windows ungueltige Zeichen
+im Namen werden durch `_` ersetzt; Format: siehe
 `ifc_schnitt_importer/shared/schnitt_format.py` - dieses Tool importiert
 dasselbe Modul, es gibt nur EIN Format).
 

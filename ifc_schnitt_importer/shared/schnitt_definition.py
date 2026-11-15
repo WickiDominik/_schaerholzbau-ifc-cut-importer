@@ -1,16 +1,19 @@
 """Parser for die Schnitt-Definition(en) in einem Cadwork Benutzerattribut.
 
 Format (Text in einem Benutzerattribut, siehe app/config.py
-SchnittDefinitionConfig.ATTRIBUTE_NUMBER) - EINE Definition pro Zeile,
-dadurch koennen auf einem einzigen Element (z.B. einem Ausgabeelement)
-beliebig viele Schnitte definiert werden:
+SchnittDefinitionConfig) - empfohlen ist EINE Definition pro Attribut-
+Nummer (20-29), weil Cadwork-Benutzerattribute auf ca. 128 Zeichen
+begrenzt sind. Mehrere Zeilen in einem Attribut werden zusaetzlich
+unterstuetzt, passen aber nur bei sehr kurzen Definitionen:
 
     Name=Schnitt A-A;Typ=vertikal;Ursprung=1234.5,6789.0,0;Richtung=0,1,0
     Name=Grundriss EG;Typ=horizontal;Ursprung=0,0,1000;Richtung=0,0,1
 
 - Name: freier Text, wird als Schnittname verwendet (Zwischendatei-Name,
-  Cadwork-Gruppe beim Import) - muss je Element eindeutig sein
-- Typ: "horizontal" oder "vertikal"
+  Cadwork-Gruppe beim Import) - muss im ganzen Modell eindeutig sein
+- Typ: "horizontal" oder "vertikal" - muss zur Richtung passen
+  (horizontal: Normale ~ Z-Achse, vertikal: Normale ~ in der XY-Ebene,
+  Toleranz siehe TYP_WINKEL_TOLERANZ_GRAD)
 - Ursprung: ein Punkt auf der Schnittebene, "x,y,z" in mm (Cadwork-Weltkoordinaten)
 - Richtung: die Ebenennormale, "x,y,z" (muss nicht normiert sein)
 
@@ -24,13 +27,18 @@ Cadwork-Plugin (ifc_schnitt_importer) als auch vom externen Generator-Tool
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+import math
+from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 Point3 = Tuple[float, float, float]
 
 REQUIRED_KEYS = ("Name", "Typ", "Ursprung", "Richtung")
 VALID_TYPEN = ("horizontal", "vertikal")
+
+# Wie weit (Grad) die Normale von der fuer den Typ erwarteten Lage
+# abweichen darf, bevor die Definition als widerspruechlich gilt.
+TYP_WINKEL_TOLERANZ_GRAD = 1.0
 
 
 class SchnittDefinitionError(ValueError):
@@ -52,9 +60,6 @@ class SchnittDefinition:
             f"Name={self.name};Typ={self.typ};"
             f"Ursprung={ux},{uy},{uz};Richtung={rx},{ry},{rz}"
         )
-
-    def to_dict(self) -> dict:
-        return asdict(self)
 
     @classmethod
     def parse_from_text(cls, text: str, source_element_id: Optional[int] = None) -> "SchnittDefinition":
@@ -87,6 +92,8 @@ class SchnittDefinition:
         if richtung[0] == 0 and richtung[1] == 0 and richtung[2] == 0:
             raise SchnittDefinitionError("Richtung darf kein Nullvektor sein")
 
+        cls._pruefe_typ_zu_richtung(typ, richtung)
+
         return cls(name=name, typ=typ, ursprung=ursprung, richtung=richtung, source_element_id=source_element_id)
 
     @classmethod
@@ -116,6 +123,24 @@ class SchnittDefinition:
                 fehler.append(f"Zeile {line_number}: {e}")
 
         return definitionen, fehler
+
+    @staticmethod
+    def _pruefe_typ_zu_richtung(typ: str, richtung: Point3) -> None:
+        """Typ und Normale muessen zusammenpassen, sonst ist die Definition
+        widerspruechlich (z.B. Typ=horizontal mit Richtung=1,0,0 ergaebe
+        in Wahrheit einen vertikalen Schnitt)."""
+
+        laenge = math.sqrt(richtung[0] ** 2 + richtung[1] ** 2 + richtung[2] ** 2)
+        # Winkel zwischen Normale und XY-Ebene: 90 Grad = Normale zeigt nach oben.
+        winkel_zur_xy_ebene = math.degrees(math.asin(min(1.0, abs(richtung[2]) / laenge)))
+        if typ == "horizontal" and winkel_zur_xy_ebene < 90.0 - TYP_WINKEL_TOLERANZ_GRAD:
+            raise SchnittDefinitionError(
+                f"Typ=horizontal erwartet eine Richtung entlang der Z-Achse (z.B. 0,0,1), erhalten {richtung}"
+            )
+        if typ == "vertikal" and winkel_zur_xy_ebene > TYP_WINKEL_TOLERANZ_GRAD:
+            raise SchnittDefinitionError(
+                f"Typ=vertikal erwartet eine Richtung in der XY-Ebene (Z-Anteil 0, z.B. 1,0,0), erhalten {richtung}"
+            )
 
     @staticmethod
     def _parse_point(value: str, field_name: str) -> Point3:

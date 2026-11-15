@@ -192,7 +192,10 @@ def show_main_window(parent=None):
             try:
                 service = SchnittGeneratorService()
                 service.ensure_attribute_label()
-                definitionen_export, definitionen_datei = service.export_schnitt_definitionen()
+                # Projektdaten JETZT (Hauptthread) lesen - der Generator-
+                # Thread darf die Cadwork-API nicht mehr aufrufen.
+                kontext = service.projekt_kontext()
+                definitionen_export, definitionen_datei = service.export_schnitt_definitionen(kontext)
             except Exception as e:
                 _set_status("Fehler beim Export der Schnitt-Definitionen - siehe Konsole.")
                 _set_summary(f"Fehler: {e}")
@@ -210,9 +213,9 @@ def show_main_window(parent=None):
 
             _set_status(f"{len(definitionen_export.definitionen)} Definition(en) gefunden. Starte generator_tool ...")
             root.update_idletasks()
-            _step_subprocess(service, definitionen_export, definitionen_datei)
+            _step_subprocess(service, definitionen_export, definitionen_datei, kontext)
 
-        def _step_subprocess(service, definitionen_export, definitionen_datei):
+        def _step_subprocess(service, definitionen_export, definitionen_datei, kontext):
             # Der Subprozess selbst beruehrt keine Cadwork-API -> sicher
             # in einem Hintergrund-Thread, damit die UI ansprechbar bleibt.
             line_queue: "queue.Queue" = queue.Queue()
@@ -224,6 +227,7 @@ def show_main_window(parent=None):
                         ifc_path,
                         definitionen_export,
                         definitionen_datei,
+                        kontext,
                         line_callback=lambda line: line_queue.put(("line", line)),
                     )
                     result_holder["result"] = result
@@ -252,6 +256,13 @@ def show_main_window(parent=None):
                     return
 
             def _poll_queue():
+                # Fenster waehrend der Generierung geschlossen -> nicht
+                # weiter pollen (sonst TclError auf zerstoerten Widgets).
+                try:
+                    if not root.winfo_exists():
+                        return
+                except tk.TclError:
+                    return
                 try:
                     while True:
                         kind, payload = line_queue.get_nowait()
@@ -286,6 +297,9 @@ def show_main_window(parent=None):
                 _set_status("Generierung abgeschlossen.")
                 zeilen = [f"{len(result.erzeugte_dateien)} von {len(definitionen_export.definitionen)} Schnitt(en) generiert:"]
                 zeilen += [f"  - {os.path.basename(p)}" for p in result.erzeugte_dateien]
+                if definitionen_export.fehler:
+                    zeilen.append(f"\n{len(definitionen_export.fehler)} Definition(en) uebersprungen:")
+                    zeilen += [f"  - Element {f.element_id}: {f.fehler}" for f in definitionen_export.fehler]
                 _set_summary("\n".join(zeilen))
                 _refresh_list()
             else:

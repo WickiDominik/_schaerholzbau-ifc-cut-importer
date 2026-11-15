@@ -140,6 +140,57 @@ def test_berechne_schnitt_ueberspringt_problematisches_bauteil_ohne_abzubrechen(
     _assert(flaechen[0].ifc_guid == "GUT", "die verarbeitete Flaeche muss vom guten Bauteil stammen")
 
 
+def _quader_dreiecke(x0, y0, z0, x1, y1, z1):
+    """Achsparalleler Quader als 12 Dreiecke."""
+
+    sx, sy, sz = x1 - x0, y1 - y0, z1 - z0
+    return [
+        tuple((x0 + x * sx / 1000.0, y0 + y * sy / 1000.0, z0 + z * sz / 1000.0) for x, y, z in tri)
+        for tri in _wuerfel_dreiecke(1000.0)
+    ]
+
+
+def test_loch_wird_nicht_gefuellt_sondern_als_kontur_ausgegeben():
+    """Hohlprofil (Rohr mit quadratischem Querschnitt): aussen 0..1000,
+    innen 250..750. Ein horizontaler Schnitt liefert zwei Ringe - der
+    innere ist ein Loch und darf keine gefuellte Flaeche werden."""
+
+    aussen = _quader_dreiecke(0, 0, 0, 1000, 1000, 1000)
+    # Innenwand: gleiche Box, aber Normalen nach innen - fuer den Schnitt
+    # zaehlen nur die Segmente, die Orientierung ist egal.
+    innen = _quader_dreiecke(250, 250, 0, 750, 750, 1000)
+    # Deckel/Boden des Rohrs liegen nicht in der Schnitthoehe -> irrelevant.
+    bauteil = IfcBauteilGeometrie(ifc_guid="ROHR", ifc_type="IfcMember", dreiecke=aussen + innen)
+    ebene = SchnittEbene(origin=[0, 0, 500], normal=[0, 0, 1])
+
+    flaechen, linien = berechne_schnitt(ebene, [bauteil])
+
+    _assert(len(flaechen) == 1, f"nur der Aussenumriss als Flaeche erwartet, erhalten {len(flaechen)}")
+    _assert(abs(_polygon_area_xy(flaechen[0].vertices) - 1000 * 1000) < 1e-3, "Flaeche ist der Aussenumriss")
+    _assert(len(linien) == 4, f"Lochkontur als 4 Linien erwartet, erhalten {len(linien)}")
+    for linie in linien:
+        for x, y, _ in (linie.start, linie.end):
+            _assert(249.99 <= x <= 750.01 and 249.99 <= y <= 750.01, f"Lochlinie liegt im Loch ({x}, {y})")
+
+
+def test_bounding_box_vorpruefung_ueberspringt_bauteile_ausserhalb():
+    """Bauteile, deren Bounding-Box die Ebene nicht trifft, werden ohne
+    Dreiecks-Pruefung uebersprungen - auch wenn ihre Dreiecke kaputt waeren."""
+
+    weit_weg = IfcBauteilGeometrie(
+        ifc_guid="WEIT",
+        ifc_type="IfcWall",
+        dreiecke=[("kaputt",)],  # wuerde beim Pruefen eine Ausnahme ausloesen
+        bbox=((0.0, 0.0, 5000.0), (1000.0, 1000.0, 6000.0)),
+    )
+    nah = IfcBauteilGeometrie(ifc_guid="NAH", ifc_type="IfcWall", dreiecke=_wuerfel_dreiecke(1000.0))
+    ebene = SchnittEbene(origin=[0, 0, 500], normal=[0, 0, 1])
+
+    flaechen, _ = berechne_schnitt(ebene, [weit_weg, nah])
+    _assert([f.ifc_guid for f in flaechen] == ["NAH"], "nur das Bauteil in Schnitthoehe liefert eine Flaeche")
+    _assert(nah.bbox == ((0, 0, 0), (1000.0, 1000.0, 1000.0)), f"Bounding-Box wird bei Bedarf berechnet: {nah.bbox}")
+
+
 def _polygon_area_xy(vertices):
     """Shoelace-Formel (funktioniert hier, da der Testring in der XY-Ebene liegt)."""
 
@@ -159,6 +210,8 @@ def main():
         test_ebene_ausserhalb_des_wuerfels_liefert_nichts,
         test_simplify_collinear_stuerzt_bei_entarteter_flaeche_nicht_ab,
         test_berechne_schnitt_ueberspringt_problematisches_bauteil_ohne_abzubrechen,
+        test_loch_wird_nicht_gefuellt_sondern_als_kontur_ausgegeben,
+        test_bounding_box_vorpruefung_ueberspringt_bauteile_ausserhalb,
     ]
     for test in tests:
         print(f"--- {test.__name__} ---")

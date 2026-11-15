@@ -539,3 +539,40 @@ lieferte deutlich mehr Bauteile):** drei Verbesserungen umgesetzt:
 Mock-Dry-Runs fuer beide Services aktualisiert und gruen (inkl. echtem
 Subprozess-Aufruf mit Streaming-Callback gegen die Demo-IFC, sowie
 `join_elements`/`progress_callback` im Importer-Mock).
+
+## Code-Review-Optimierungen (2026-11-15)
+
+Nach einem Code-Review umgesetzt (Details in den jeweiligen Dateien):
+
+- **Import-Marker von Benutzerattribut 21 auf 30 verschoben.** 21 lag im
+  Definitionsbereich 20-29: importierte Flaechen wurden beim naechsten
+  Generieren als (fehlerhafte) Definition gelesen, und die Attribut-
+  Beschriftungen ueberschrieben sich gegenseitig. Alte Importe (Marker
+  auf 21 + Kommentar `ifc_schnitt_import`) werden beim naechsten Import
+  weiterhin gefunden, ersetzt und dabei auf 30 migriert.
+- **Keine Cadwork-API mehr im Generator-Thread:** Projektnummer und
+  3D-Pfad werden vorab auf dem Hauptthread gelesen (`ProjektKontext`).
+- **Ungepufferte Subprozess-Ausgabe** (`-u`, `PYTHONUNBUFFERED`), damit
+  der Fortschrittsbalken live laeuft; unter Windows ohne Konsolenfenster.
+- **Schnittnamen -> Dateinamen bereinigt** (`sicherer_dateiname`), doppelte
+  Schnittnamen werden beim Scan gemeldet statt sich still zu
+  ueberschreiben. Nur in diesem Lauf geschriebene Zwischendateien zaehlen
+  als "generiert".
+- **Import-Reihenfolge:** neu erzeugen und markieren, erst dann den alten
+  Import loeschen; Marker unabhaengig von BG/BUG/Name setzen.
+- **Loecher:** innere Ringe (Hohlprofile, Aussparungen) werden nicht mehr
+  gefuellt, sondern als Kontur-Linien ausgegeben.
+- **Typ muss zur Richtung passen** (Toleranz 1 Grad).
+- **Einstellungen und Logs pro Benutzer unter `%APPDATA%`**
+  (Rueckfall: Plugin-Ordner); Stacktraces im Log werden aus dem
+  Exception-Objekt erzeugt.
+- **Performance:** Bounding-Box-Vorpruefung je Bauteil im Generator;
+  frueheren Import ueber `ec.filter_elements` + `cadwork.element_filter`
+  suchen.
+- `ifcopenshell` auf 0.8.5 fixiert, neue Unit-Tests unter
+  `ifc_schnitt_importer/tests/unit/`.
+
+Live in Cadwork noch zu pruefen: ob `element_filter.set_user_attribute`
+exakt oder per Teilstring vergleicht (das Ergebnis wird sicherheitshalber
+exakt nachgeprueft) und das Verhalten des Subprozesses ohne
+Konsolenfenster.
