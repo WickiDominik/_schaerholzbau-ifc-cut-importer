@@ -18,6 +18,7 @@ _schaerholzbau-ifc-schnitt-importer/
 |- plugin_info.xml
 |- docs/
 |  |- konzept.md            Fachliches Konzept + Entscheidungen + Etappenplan
+|  |- benutzerhandbuch.md   Kurzanleitung, im Fenster ueber "Hilfe" angezeigt
 |  `- architecture.md       dieses Dokument
 |- ifc_schnitt_importer/    Cadwork-Plugin, Namespace-Package
 |  |- app/
@@ -25,7 +26,7 @@ _schaerholzbau-ifc-schnitt-importer/
 |  |  |- config.py          AppConfig, PathConfig, SchnittDefinitionConfig, ReferenceGeometryConfig
 |  |  |- main.py            cadwork_menu() Einstiegspunkt
 |  |  |- menu_controller.py Cadwork "simple menu" Dispatch (ein Menuepunkt)
-|  |  `- main_window.py     EIN Fenster fuer Generieren + Importieren (Fortschrittsbalken, Threading)
+|  |  `- main_window.py     EIN Fenster im Toolcenter-Stil: Schrittleiste, Schnitt-Tabelle, Generieren + Importieren
 |  |- cadwork_api/          Duenne Wrapper um die Cadwork-Controller-Module
 |  |  |- bim.py             bim_controller
 |  |  |- elements.py        element_controller
@@ -36,8 +37,9 @@ _schaerholzbau-ifc-schnitt-importer/
 |  |- features/
 |  |  |- schnitt_generator/ service.py: Benutzerattribute scannen -> schnitt_definitionen.json,
 |  |  |                     generator_tool per Subprozess anstossen (kein window.py mehr - UI in app/main_window.py)
-|  |  `- schnitt_importer/  service.py: .ifccut.json einlesen -> Flaechen/Linien im 3D, join_elements
-|  |                        (kein window.py mehr - UI in app/main_window.py)
+|  |  |- schnitt_importer/  service.py: .ifccut.json einlesen -> Flaechen/Linien im 3D, join_elements
+|  |  |                    (kein window.py mehr - UI in app/main_window.py)
+|  |  `- schnitt_workflow/  uebersicht.py: Status je Schnitt + naechster Schritt (reines Python, getestet)
 |  |- shared/                Von Cadwork-Plugin UND generator_tool/ gemeinsam genutzt (reines Python)
 |  |  |- schnitt_definition.py  Benutzerattribut-Textformat (Stufe 1 -> Stufe 2)
 |  |  |- schnitt_format.py      Schnitt-Ergebnis-JSON (Stufe 2 -> Stufe 3)
@@ -45,6 +47,10 @@ _schaerholzbau-ifc-schnitt-importer/
 |  |  |- local_settings.py      lokale UI-Einstellungen (pro Benutzer unter %APPDATA%)
 |  |  |- user_paths.py          %APPDATA%\schaerholzbau\ifc_schnitt_importer\{settings,logs}
 |  |  |- window_utils.py        Tk-Root/Toplevel-Handling (Shell vs. API)
+|  |  |- theme.py               Farben/Schriften/Knopfarten (Kopie aus dem Toolcenter)
+|  |  |- window_geometry.py     Position neben Cadwork, DPI (Kopie aus dem Toolcenter)
+|  |  |- tool_window.py         Fensterbasis im Toolcenter-Stil (Kopfband, Statuszeile, Fusszeile)
+|  |  |- help_window.py         Hilfefenster (zeigt docs/benutzerhandbuch.md)
 |  |  `- dependencies/          Bootstrap-Erweiterungspunkt (aktuell keine externen Pakete noetig)
 |  |- resources/icons/
 |  |- settings/             nur Rueckfall, falls %APPDATA% nicht beschreibbar ist
@@ -80,6 +86,7 @@ python -m py_compile _schaerholzbau-ifc-schnitt-importer.py
 python generator_tool/tests/test_schnitt_berechnung.py
 python ifc_schnitt_importer/tests/unit/test_shared_formate.py
 python ifc_schnitt_importer/tests/unit/test_services.py
+python ifc_schnitt_importer/tests/unit/test_uebersicht.py
 ```
 
 Alle Testdateien laufen auch mit `pytest`, falls installiert.

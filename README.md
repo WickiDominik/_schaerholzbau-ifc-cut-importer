@@ -15,7 +15,10 @@ Referenz-Flächen und -Linien ins 3D-Modell.
 ```
 
 Beide Schritte laufen in **einem gemeinsamen Fenster** im Cadwork-Menü,
-mit Fortschrittsanzeige. Details siehe [`docs/konzept.md`](docs/konzept.md).
+im Look des schaerholzbau Toolcenters: eine Schrittleiste zeigt den
+nächsten Schritt, eine Tabelle den Stand jedes Schnitts (fehlerhaft,
+noch nicht generiert, IFC neuer, bereit, im 3D). Kurzanleitung im
+Fenster unter «Hilfe» bzw. in [`docs/benutzerhandbuch.md`](docs/benutzerhandbuch.md). Details siehe [`docs/konzept.md`](docs/konzept.md).
 
 ## Warum zwei Laufzeiten
 
